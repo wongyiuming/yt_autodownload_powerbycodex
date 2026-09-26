@@ -1,0 +1,57 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  background: #f6f7f9;
+  color: #1f2328;
+}
+* { box-sizing: border-box; }
+body { margin: 0; width: 520px; min-height: 560px; background: #f6f7f9; }
+main { padding: 16px; }
+header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+h1 { margin: 0 0 4px; font-size: 22px; }
+header p { margin: 0; color: #667085; font-size: 12px; }
+.card { background: #fff; border: 1px solid #e3e7ed; border-radius: 14px; padding: 14px; margin-bottom: 12px; box-shadow: 0 3px 12px rgba(0,0,0,.035); }
+.row { display: flex; align-items: center; gap: 8px; }
+.between { justify-content: space-between; }
+.actions { display: flex; gap: 6px; }
+button { border: 0; border-radius: 9px; padding: 8px 11px; font-weight: 600; cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+button.primary { width: 100%; background: #ff0033; color: #fff; margin-top: 12px; padding: 11px; }
+button.ghost { background: #f0f2f5; color: #30363d; font-size: 12px; }
+input[type="url"] { width: 100%; margin-top: 10px; padding: 10px 11px; border-radius: 9px; border: 1px solid #d0d7de; outline: none; }
+input[type="url"]:focus { border-color: #6e7781; box-shadow: 0 0 0 2px rgba(9,105,218,.08); }
+.source-meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: #667085; font-size: 12px; min-height: 24px; }
+.badge { border-radius: 999px; padding: 3px 8px; font-weight: 700; }
+.badge.video { background: #fff0f3; color: #cf173c; }
+.badge.playlist { background: #eef6ff; color: #0969da; }
+.badge.channel { background: #f2f0ff; color: #6f42c1; }
+.badge.unknown { background: #f0f2f5; color: #667085; }
+.mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.mode { border: 1px solid #d8dee4; border-radius: 10px; padding: 10px; display: grid; gap: 3px; cursor: pointer; }
+.mode input { display: none; }
+.mode.active { border-color: #ff0033; background: #fff7f8; }
+.mode-title { font-weight: 700; font-size: 13px; }
+.mode small { color: #667085; line-height: 1.35; }
+.message { min-height: 18px; margin: 8px 2px 0; font-size: 12px; color: #667085; }
+.message.error { color: #cf222e; }
+.message.ok { color: #1a7f37; }
+.host-state { font-size: 11px; padding: 5px 8px; border-radius: 999px; font-weight: 700; white-space: nowrap; }
+.host-state.online { background: #dafbe1; color: #116329; }
+.host-state.offline { background: #ffebe9; color: #cf222e; }
+.muted { color: #8c959f; font-size: 12px; margin-left: 6px; }
+.queue { display: grid; gap: 8px; margin-top: 12px; max-height: 290px; overflow-y: auto; }
+.empty { text-align: center; color: #8c959f; padding: 32px 8px; font-size: 12px; }
+.task { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; }
+.task-top { display: flex; justify-content: space-between; gap: 10px; }
+.task-title { font-weight: 650; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 350px; }
+.task-sub { color: #667085; font-size: 11px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-state { font-size: 10px; font-weight: 700; border-radius: 999px; padding: 3px 6px; height: fit-content; background: #f0f2f5; white-space: nowrap; }
+.task-state.downloading { background: #ddf4ff; color: #0969da; }
+.task-state.done { background: #dafbe1; color: #116329; }
+.task-state.error { background: #ffebe9; color: #cf222e; }
+.task-state.queued { background: #fff8c5; color: #7d4e00; }
+.progress { height: 6px; background: #eef0f2; border-radius: 999px; overflow: hidden; margin-top: 8px; }
+.progress > div { height: 100%; background: #0969da; width: 0; transition: width .2s ease; }
+.task-bottom { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 7px; color: #667085; font-size: 10px; }
+.task-bottom button { padding: 4px 7px; font-size: 10px; }
+footer { color: #8c959f; font-size: 10px; line-height: 1.4; padding: 0 2px 4px; }
