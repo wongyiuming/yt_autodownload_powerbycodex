@@ -22,7 +22,7 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r native_host/requirements.txt pyinstaller ytmusicapi
+          python -m pip install -r native_host/requirements.txt pyinstaller
 
       - name: Syntax checks
         shell: pwsh
@@ -30,12 +30,6 @@ jobs:
           python -m compileall -q native_host tools
           node --check extension/background.js
           node --check extension/popup.js
-
-      - name: Diagnose real channel album pagination
-        run: python tools/probe_youtube_channel.py https://www.youtube.com/channel/UC5QL_gYA1VzTkcIjwD4cxfA
-
-      - name: Diagnose YouTube Music full discography
-        run: python tools/probe_ytmusic_channel.py
 
       - name: Smoke test real channel album folders
         run: python tools/smoke_album_folders.py
