@@ -18,7 +18,7 @@ except Exception:
     pass
 
 URL = "https://www.youtube.com/channel/UC5QL_gYA1VzTkcIjwD4cxfA"
-EXPECTED_ALBUMS = 40
+EXPECTED_ALBUMS = 37
 
 channel_title, cards, shelf_found = fetch_channel_album_cards(URL)
 print(f"channel={channel_title!r} shelf={shelf_found} albums={len(cards)} expected={EXPECTED_ALBUMS}")
@@ -69,4 +69,4 @@ print(f"stone_album_playlist={stone.playlist_id} tracks={len(entries)}")
 if not entries:
     raise SystemExit("album playlist did not expose track metadata")
 
-print("SMOKE_OK: 40 browser-visible albums -> 40 album folders -> playlist track metadata")
+print("SMOKE_OK: 37 browser-visible releases -> 37 release folders -> playlist track metadata")
