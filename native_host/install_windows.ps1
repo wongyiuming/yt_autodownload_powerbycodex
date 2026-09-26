@@ -70,7 +70,8 @@ $Manifest = @"
   ]
 }
 "@
-Set-Content -Path $ManifestPath -Value $Manifest -Encoding UTF8
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($ManifestPath, $Manifest, $Utf8NoBom)
 $RegPath = "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.wongyiuming.yt_autodownload"
 New-Item -Path $RegPath -Force | Out-Null
 Set-Item -Path $RegPath -Value $ManifestPath
