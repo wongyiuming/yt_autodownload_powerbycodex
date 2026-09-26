@@ -24,6 +24,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r native_host/requirements.txt pyinstaller
 
+      - name: Probe YouTube channel metadata
+        run: python tools/probe_youtube_channel.py https://www.youtube.com/channel/UC5QL_gYA1VzTkcIjwD4cxfA
+
       - name: Freeze Native Messaging host
         shell: pwsh
         run: |
