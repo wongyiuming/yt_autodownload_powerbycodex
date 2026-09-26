@@ -6,6 +6,11 @@ from collections import Counter
 
 import httpx
 
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 URL = sys.argv[1] if len(sys.argv) > 1 else "https://www.youtube.com/channel/UC5QL_gYA1VzTkcIjwD4cxfA"
 
 HEADERS = {
@@ -126,7 +131,6 @@ with httpx.Client(headers=HEADERS, follow_redirects=True, timeout=30.0, http2=Tr
             if isinstance(item, dict) and "lockupViewModel" in item:
                 print("ALBUM", i, json.dumps(summarize_lockup(item), ensure_ascii=False))
 
-    # Also show any browse endpoints that carry params; the shelf's 'View all' command is usually one of them.
     print("BROWSE_ENDPOINTS_WITH_PARAMS")
     seen = set()
     for path, obj in walk(data):
