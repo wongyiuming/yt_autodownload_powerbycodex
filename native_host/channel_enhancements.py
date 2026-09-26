@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
+import re
 
 import album_support
 from youtube_album_catalog import fetch_channel_album_cards
+
+
+def _clean_channel_title(value: str) -> str:
+    text = album_support.clean_channel_title(value)
+    text = re.sub(r"\s+-\s+(主题|主題)$", "", text, flags=re.I)
+    text = re.sub(r"\s+-\s+YouTube$", "", text, flags=re.I)
+    return text.strip() or "频道"
 
 
 def install_channel_enhancements() -> None:
@@ -15,7 +22,7 @@ def install_channel_enhancements() -> None:
 
     def discover(self, channel_url: str):
         browser_title, cards, shelf_found = fetch_channel_album_cards(channel_url)
-        channel_title = album_support.clean_channel_title(browser_title or "频道")
+        channel_title = _clean_channel_title(browser_title or "频道")
         albums = []
         used_folders: dict[str, str] = {}
 
@@ -62,7 +69,7 @@ def install_channel_enhancements() -> None:
                 root_info.get("channel") or root_info.get("uploader") or root_info.get("title") or ""
             ).strip()
             if root_title:
-                channel_title = album_support.clean_channel_title(root_title)
+                channel_title = _clean_channel_title(root_title)
             upload_ids = sorted(self._collect_video_ids(root_info))
         except Exception as exc:
             self.log.warning(f"channel uploads discovery failed {channel_url}: {exc}")
