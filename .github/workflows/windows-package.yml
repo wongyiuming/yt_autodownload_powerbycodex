@@ -58,18 +58,23 @@ jobs:
             SHA256SUMS.txt
           retention-days: 30
 
-      - name: Publish v0.1.0 release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release-v0.1.0]')
+      - name: Publish release requested by commit
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release-v')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          gh release create v0.1.0 `
+          if ($env:COMMIT_MESSAGE -notmatch '\[release-(v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)\]') {
+            throw "Release marker is malformed. Expected [release-vX.Y.Z]."
+          }
+          $tag = $Matches[1]
+          gh release create $tag `
             yt_autodownload_windows.zip `
             SHA256SUMS.txt `
             --target "${{ github.sha }}" `
-            --title "v0.1.0" `
-            --notes "First usable Chrome-first Windows release. Includes the unpacked Chrome MV3 extension, frozen Native Messaging host, bundled Node runtime, install/uninstall scripts, yt-dlp queue, single-video/playlist/public-channel detection, MP4 video and MP3 audio modes."
+            --title $tag `
+            --generate-notes
 
       - name: Publish tagged release
         if: startsWith(github.ref, 'refs/tags/v')

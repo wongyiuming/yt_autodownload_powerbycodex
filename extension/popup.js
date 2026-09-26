@@ -2,6 +2,8 @@ const sourceUrl = document.getElementById("sourceUrl");
 const kindBadge = document.getElementById("kindBadge");
 const sourceHint = document.getElementById("sourceHint");
 const enqueueButton = document.getElementById("enqueue");
+const repairButton = document.getElementById("repairChannel");
+const channelTools = document.getElementById("channelTools");
 const messageElement = document.getElementById("message");
 const queueElement = document.getElementById("queue");
 const queueCount = document.getElementById("queueCount");
@@ -11,6 +13,7 @@ const hostDetails = document.getElementById("hostDetails");
 let detected = { kind: "unknown", normalizedUrl: "", label: "未识别" };
 let state = { connected: false, queue: [], hostInfo: {} };
 let currentTitle = "";
+let repairing = false;
 
 function classifyYoutubeUrl(raw) {
   try {
@@ -65,11 +68,13 @@ function updateDetected() {
   const hints = {
     video: "将下载当前视频",
     playlist: "将下载列表内全部公开视频",
-    channel: "将下载该公开频道的全部可访问视频",
+    channel: "将识别专辑/单曲并按目录分类；其他上传单独归档",
     unknown: "请打开 YouTube 视频、播放列表或公开频道",
   };
   sourceHint.textContent = hints[detected.kind] || hints.unknown;
-  enqueueButton.disabled = detected.kind === "unknown" || !state.connected;
+  enqueueButton.disabled = detected.kind === "unknown" || !state.connected || repairing;
+  channelTools.hidden = detected.kind !== "channel";
+  repairButton.disabled = detected.kind !== "channel" || !state.connected || repairing;
 }
 
 function selectedMode() {
@@ -93,8 +98,9 @@ function renderState(nextState) {
   hostState.textContent = state.connected ? "本机组件已连接" : "本机组件未连接";
   hostState.className = `host-state ${state.connected ? "online" : "offline"}`;
   const info = state.hostInfo || {};
+  const albumText = info.album_organization ? " · 专辑分类: 已启用" : "";
   hostDetails.textContent = state.connected
-    ? `下载目录：${info.download_root || "-"}${info.node ? ` · Node: ${info.node}` : " · 未检测到 Node.js（部分 YouTube 资源可能受影响）"}`
+    ? `Host ${info.version || "-"} · 下载目录：${info.download_root || "-"}${albumText}${info.node ? ` · Node: ${info.node}` : " · 未检测到 Node.js（部分 YouTube 资源可能受影响）"}`
     : "首次使用请运行仓库中的 Install-Windows.bat，并在 chrome://extensions 加载 extension 目录。";
   renderQueue(state.queue || []);
   updateDetected();
@@ -207,10 +213,38 @@ enqueueButton.addEventListener("click", async () => {
       mode: selectedMode(),
       title: currentTitle,
     });
-    setMessage(`${detected.label} 已加入队列，可以继续打开其他页面继续添加。`, "ok");
+    const suffix = detected.kind === "channel" ? "；开始前会先整理已经下载的同频道文件。" : "。";
+    setMessage(`${detected.label} 已加入队列${suffix}`, "ok");
   } catch (error) {
     setMessage(error.message || String(error), "error");
   } finally {
+    updateDetected();
+  }
+});
+
+repairButton.addEventListener("click", async () => {
+  updateDetected();
+  if (detected.kind !== "channel" || repairing) return;
+  repairing = true;
+  updateDetected();
+  setMessage("正在读取“专辑和单曲”并整理已下载文件；文件多时需要一些时间…");
+  try {
+    const response = await send({ type: "repairChannel", url: detected.normalizedUrl });
+    const repair = response.repair || {};
+    const catalog = repair.catalog || {};
+    const audio = repair.results?.audio || {};
+    const video = repair.results?.video || {};
+    const moved = Number(audio.moved || 0) + Number(video.moved || 0);
+    const linked = Number(audio.linked || 0) + Number(video.linked || 0);
+    const conflicts = Number(audio.conflicts || 0) + Number(video.conflicts || 0);
+    setMessage(
+      `整理完成：识别 ${catalog.albums || 0} 个专辑/单曲，移动 ${moved} 个文件，补齐 ${linked} 个重复专辑归属${conflicts ? `，${conflicts} 个冲突已保留原文件` : ""}。`,
+      conflicts ? "" : "ok",
+    );
+  } catch (error) {
+    setMessage(error.message || String(error), "error");
+  } finally {
+    repairing = false;
     updateDetected();
   }
 });

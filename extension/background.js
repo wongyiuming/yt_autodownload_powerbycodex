@@ -126,6 +126,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse(result);
       return;
     }
+    if (message.type === "repairChannel") {
+      const cookies = await youtubeCookies();
+      const result = await rpc("repair_channel", {
+        url: message.url,
+        cookies,
+      }, 10 * 60 * 1000);
+      sendResponse(result);
+      return;
+    }
     if (message.type === "cancel") {
       const result = await rpc("cancel", { task_id: message.taskId });
       queue = result.queue || queue;

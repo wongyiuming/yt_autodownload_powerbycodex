@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "YT AutoDownload Queue",
-  "version": "1.0.0",
-  "description": "Queue YouTube videos, playlists and public channels for local yt-dlp downloading.",
+  "version": "1.1.0",
+  "description": "Queue YouTube videos, playlists and public channels for local yt-dlp downloading with album-aware organization.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvhmXf9e//y2s/az+dkKjlkBalUxFUkxfFVcOv1WpYluzFR1bOBDUVWohlNxIFE3d7rLBGL9Q6QV8ErvXr3aShI3parvx0SMKgzZP9vfR4xWv1cmlXug5HmpdD1f1al9+II1r/wNVG14QmkogaXOjrwcdQduCL6dOglOae2nYxes/FFGfIPFQCM1JIR7hlYwmP5E/vUND0DYR3zD96hIC9UA1xyxXDknVxJSKaYfdHtGmMZXDpbG2jkGwFoJnPKzZX/gG1gxiNAHCpjWdPBLqlb+TndotE1EnIHIb78xb9paSH0nyKHq/L0iD+Ht+kBu0b2/vxPAfW9v2yy6N+dO8LwIDAQAB",
   "permissions": [
     "tabs",
