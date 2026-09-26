@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>YT AutoDownload Queue</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>YT AutoDownload</h1>
+        <p>单视频 / 播放列表 / 公开频道 · 本机队列下载</p>
+      </div>
+      <span id="hostState" class="host-state offline">未连接</span>
+    </header>
+
+    <section class="card source-card">
+      <div class="row between">
+        <strong>当前来源</strong>
+        <button id="readTab" class="ghost">读取当前页</button>
+      </div>
+      <input id="sourceUrl" type="url" spellcheck="false" placeholder="打开 YouTube 页面，或粘贴 URL" />
+      <div class="source-meta">
+        <span id="kindBadge" class="badge unknown">未识别</span>
+        <span id="sourceHint">等待识别</span>
+      </div>
+
+      <div class="mode-grid" role="radiogroup" aria-label="下载类型">
+        <label class="mode active">
+          <input type="radio" name="mode" value="video" checked />
+          <span class="mode-title">视频 MP4</span>
+          <small>最佳画质 + 最佳音频，FFmpeg 合并</small>
+        </label>
+        <label class="mode">
+          <input type="radio" name="mode" value="audio" />
+          <span class="mode-title">仅音频 MP3</span>
+          <small>最佳音轨，转换为 MP3</small>
+        </label>
+      </div>
+
+      <button id="enqueue" class="primary">加入下载队列</button>
+      <p id="message" class="message"></p>
+    </section>
+
+    <section class="card queue-card">
+      <div class="row between">
+        <div>
+          <strong>下载队列</strong>
+          <span id="queueCount" class="muted">0 项</span>
+        </div>
+        <div class="actions">
+          <button id="openFolder" class="ghost">打开目录</button>
+          <button id="clearFinished" class="ghost">清理已完成</button>
+        </div>
+      </div>
+      <div id="queue" class="queue"></div>
+    </section>
+
+    <footer id="hostDetails"></footer>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
