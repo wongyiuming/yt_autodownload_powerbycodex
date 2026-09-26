@@ -8,9 +8,11 @@ import sys
 import traceback
 
 from album_support import install_album_support
+from archive_location import install_archive_location
 from host_legacy import CancelledError, HostLogger, NativeWriter, QueueManager, read_message
 
 install_album_support(QueueManager, CancelledError)
+install_archive_location(QueueManager)
 
 
 def main() -> int:
