@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import sys
 from collections import Counter
 
@@ -51,6 +50,8 @@ def text_of(value) -> str:
         return ""
     if isinstance(value.get("simpleText"), str):
         return value["simpleText"]
+    if isinstance(value.get("content"), str):
+        return value["content"]
     return "".join(str(x.get("text") or "") for x in value.get("runs") or [] if isinstance(x, dict))
 
 
@@ -64,47 +65,77 @@ def walk(node, path="root"):
             yield from walk(value, f"{path}[{i}]")
 
 
+def find_shelves(data: dict):
+    for path, obj in walk(data):
+        shelf = obj.get("shelfRenderer") if isinstance(obj, dict) else None
+        if isinstance(shelf, dict):
+            yield path + ".shelfRenderer", shelf
+
+
+def summarize_lockup(item: dict) -> dict:
+    lockup = item.get("lockupViewModel") or {}
+    meta = ((lockup.get("metadata") or {}).get("lockupMetadataViewModel") or {})
+    title = text_of(meta.get("title"))
+    content_id = str(lockup.get("contentId") or "")
+    playback = (((lockup.get("itemPlayback") or {}).get("inlinePlayerData") or {}).get("onSelect") or {}).get("innertubeCommand") or {}
+    watch = playback.get("watchEndpoint") or {}
+    nav = lockup.get("rendererContext") or {}
+    return {
+        "title": title,
+        "contentId": content_id,
+        "contentType": lockup.get("contentType"),
+        "playlistId": watch.get("playlistId") or content_id,
+        "videoId": watch.get("videoId") or "",
+        "metadataKeys": list(meta.keys()),
+        "rendererContextKeys": list(nav.keys()),
+    }
+
+
 with httpx.Client(headers=HEADERS, follow_redirects=True, timeout=30.0, http2=True) as client:
-    for suffix in ("", "/releases"):
-        url = URL.rstrip("/") + suffix
-        response = client.get(url, params={"hl": "zh-CN", "gl": "US"})
-        print(f"FETCH {url} -> {response.status_code} {len(response.text)} bytes final={response.url}")
-        data = extract_json_object(response.text, "ytInitialData")
-        print(f"ytInitialData keys={list(data)[:20]}")
-        if not data:
-            for marker in ("var ytInitialData =", "window[\"ytInitialData\"] =", "ytInitialData ="):
-                data = extract_json_object(response.text, marker)
-                if data:
-                    print(f"found with marker {marker!r}")
-                    break
-        if not data:
-            print("NO_INITIAL_DATA")
+    response = client.get(URL, params={"hl": "zh-CN", "gl": "US"})
+    print(f"FETCH {URL} -> {response.status_code} {len(response.text)} bytes final={response.url}")
+    data = extract_json_object(response.text, "ytInitialData")
+    print(f"ytInitialData keys={list(data)[:20]}")
+    if not data:
+        raise SystemExit("NO_INITIAL_DATA")
+
+    types = Counter()
+    for _path, obj in walk(data):
+        for key in obj:
+            if key.endswith("Renderer") or key.endswith("ViewModel"):
+                types[key] += 1
+    print("TOP_RENDERERS")
+    for name, count in types.most_common(25):
+        print(f"  {count:4d} {name}")
+
+    shelves = list(find_shelves(data))
+    print(f"SHELVES {len(shelves)}")
+    for shelf_no, (path, shelf) in enumerate(shelves, 1):
+        title = text_of(shelf.get("title"))
+        endpoint = shelf.get("endpoint") or {}
+        print("SHELF", json.dumps({
+            "no": shelf_no,
+            "path": path,
+            "title": title,
+            "endpoint": endpoint,
+            "keys": list(shelf.keys()),
+        }, ensure_ascii=False))
+        items = ((shelf.get("content") or {}).get("horizontalListRenderer") or {}).get("items") or []
+        print(f"SHELF_ITEMS {len(items)}")
+        for i, item in enumerate(items, 1):
+            if isinstance(item, dict) and "lockupViewModel" in item:
+                print("ALBUM", i, json.dumps(summarize_lockup(item), ensure_ascii=False))
+
+    # Also show any browse endpoints that carry params; the shelf's 'View all' command is usually one of them.
+    print("BROWSE_ENDPOINTS_WITH_PARAMS")
+    seen = set()
+    for path, obj in walk(data):
+        browse = obj.get("browseEndpoint") if isinstance(obj, dict) else None
+        if not isinstance(browse, dict) or not browse.get("params"):
             continue
-
-        types = Counter()
-        hits = []
-        for path, obj in walk(data):
-            for key in obj:
-                if key.endswith("Renderer") or key.endswith("ViewModel"):
-                    types[key] += 1
-            playlist_id = obj.get("playlistId")
-            browse_id = ((obj.get("navigationEndpoint") or {}).get("browseEndpoint") or {}).get("browseId")
-            watch = (obj.get("navigationEndpoint") or {}).get("watchEndpoint") or {}
-            if not playlist_id:
-                playlist_id = watch.get("playlistId")
-            title = text_of(obj.get("title")) or text_of(obj.get("headline"))
-            if playlist_id or (isinstance(browse_id, str) and (browse_id.startswith("VL") or browse_id.startswith("MP"))):
-                hits.append((path, title, playlist_id or "", browse_id or ""))
-
-        print("TOP_RENDERERS")
-        for name, count in types.most_common(25):
-            print(f"  {count:4d} {name}")
-        print(f"PLAYLIST/BROWSE HITS {len(hits)}")
-        seen = set()
-        for hit in hits:
-            key = hit[2:] + (hit[1],)
-            if key in seen:
-                continue
-            seen.add(key)
-            print("HIT", json.dumps({"path": hit[0], "title": hit[1], "playlistId": hit[2], "browseId": hit[3]}, ensure_ascii=False))
-        print("---")
+        key = (str(browse.get("browseId") or ""), str(browse.get("params") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        command_url = (((obj.get("commandMetadata") or {}).get("webCommandMetadata") or {}).get("url") or "")
+        print("BROWSE", json.dumps({"path": path, "browseId": key[0], "params": key[1], "url": command_url}, ensure_ascii=False))
