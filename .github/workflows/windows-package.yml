@@ -24,8 +24,15 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r native_host/requirements.txt pyinstaller
 
-      - name: Probe YouTube channel metadata
-        run: python tools/probe_youtube_channel.py https://www.youtube.com/channel/UC5QL_gYA1VzTkcIjwD4cxfA
+      - name: Syntax checks
+        shell: pwsh
+        run: |
+          python -m compileall -q native_host tools
+          node --check extension/background.js
+          node --check extension/popup.js
+
+      - name: Smoke test real channel album folders
+        run: python tools/smoke_album_folders.py
 
       - name: Freeze Native Messaging host
         shell: pwsh
