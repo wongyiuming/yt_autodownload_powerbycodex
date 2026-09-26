@@ -9,10 +9,17 @@ import traceback
 
 from album_support import install_album_support
 from archive_location import install_archive_location
+from channel_enhancements import install_channel_enhancements
 from host_legacy import CancelledError, HostLogger, NativeWriter, QueueManager, read_message
+from runtime_enhancements import install_runtime_enhancements, install_version_info
 
+# Base downloader/retry first; channel album logic wraps it afterwards.
+install_runtime_enhancements(QueueManager, CancelledError)
+install_channel_enhancements()
 install_album_support(QueueManager, CancelledError)
+# Preserve v0.1.2 archive migration semantics for existing installations.
 install_archive_location(QueueManager)
+install_version_info(QueueManager)
 
 
 def main() -> int:
@@ -41,6 +48,9 @@ def main() -> int:
                 elif action == "repair_channel":
                     response["repair"] = manager.repair_channel(
                         message.get("url", ""), message.get("cookies") or [])
+                elif action == "retry":
+                    manager.retry(message.get("task_id", ""))
+                    response["queue"] = manager.snapshot()
                 elif action == "cancel":
                     manager.cancel(message.get("task_id", ""))
                     response["queue"] = manager.snapshot()
