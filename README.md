@@ -14,7 +14,7 @@
   - **视频 MP4**：最佳视频 + 最佳音频，FFmpeg 合并；
   - **仅音频 MP3**：最佳音轨转 MP3。
 - 串行下载队列：当前任务运行时仍可继续打开别的视频/列表/频道并追加。
-- 播放列表、频道交给 yt-dlp 全量展开下载。
+- 播放列表、频道交给 yt-dlp 全量展开下载；频道根 URL 会按 yt-dlp 的 all uploads 行为处理可用的公开视频标签。
 - 队列状态持久化；Native host 重连后恢复未完成任务。
 - 显示当前条目、列表序号、总体进度、速度和 ETA。
 - 支持取消任务、清理完成项、打开下载目录。
@@ -97,15 +97,11 @@ Install-Windows.bat
 
 Windows GitHub Action 会额外把 runner 上的 `node.exe` 放进安装包。Native host 会优先使用同目录 Node，再回退到系统 PATH。
 
-## 旧脚本
+## 从旧脚本迁移
 
-上传的原始 `auto_download` Python 源码保留在：
+本仓库主线已经把旧 `auto_download` 脚本中的关键能力迁移为 Chrome + Native Messaging 工作流，包括 yt-dlp 下载、FFmpeg、Chrome 登录态传递和来源批量处理。旧 CLI、旧临时 HTTP Cookie bridge 和原先会把音频频道根 URL错误转到 `/playlists` 的逻辑不再作为新运行时依赖，避免把历史问题继续带入插件版。
 
-```text
-legacy/auto_download/
-```
-
-新 Chrome 工作流不依赖旧 CLI，但保留它方便后续迁移 Bilibili、强一致同步和旧 manifest 逻辑。
+当前第一版聚焦这次要求的 YouTube 单视频 / 播放列表 / 公开频道工作流；原脚本里的 Bilibili 同步逻辑暂未并入 Chrome UI。
 
 ## GitHub 现有实现调研
 
