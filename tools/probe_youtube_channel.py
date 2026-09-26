@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 import sys
-from collections import Counter
 
 import httpx
 
@@ -71,23 +70,14 @@ def walk(node):
 
 
 def find_album_shelf(data: dict) -> dict:
-    fallback = {}
     for obj in walk(data):
         shelf = obj.get("shelfRenderer") if isinstance(obj, dict) else None
         if not isinstance(shelf, dict):
             continue
         title = text_of(shelf.get("title")).strip().casefold()
-        items = ((shelf.get("content") or {}).get("horizontalListRenderer") or {}).get("items") or []
-        has_album = any(
-            isinstance(item, dict)
-            and (item.get("lockupViewModel") or {}).get("contentType") == "LOCKUP_CONTENT_TYPE_ALBUM"
-            for item in items
-        )
         if title in {"专辑和单曲", "專輯和單曲", "albums & singles", "albums and singles"}:
             return shelf
-        if has_album:
-            fallback = shelf
-    return fallback
+    return {}
 
 
 def continuation_token(node) -> str:
@@ -98,114 +88,90 @@ def continuation_token(node) -> str:
     return ""
 
 
-def renderer_counts(node) -> Counter:
-    result = Counter()
+def grid_playlists(node) -> list[tuple[str, str]]:
+    found = []
     for obj in walk(node):
-        if not isinstance(obj, dict):
+        renderer = obj.get("gridPlaylistRenderer") if isinstance(obj, dict) else None
+        if not isinstance(renderer, dict):
             continue
-        for key in obj:
-            if key.endswith("Renderer") or key.endswith("ViewModel"):
-                result[key] += 1
-    return result
+        title = text_of(renderer.get("title")).strip()
+        playlist_id = str(renderer.get("playlistId") or "").strip()
+        if title and playlist_id:
+            found.append((playlist_id, title))
+    return found
 
 
-def endpoint_ids(node: dict) -> tuple[list[str], list[str]]:
-    browse_ids = []
-    playlist_ids = []
-    for obj in walk(node):
-        if not isinstance(obj, dict):
-            continue
-        browse = obj.get("browseEndpoint")
-        if isinstance(browse, dict) and browse.get("browseId"):
-            browse_ids.append(str(browse["browseId"]))
-        watch = obj.get("watchEndpoint")
-        if isinstance(watch, dict) and watch.get("playlistId"):
-            playlist_ids.append(str(watch["playlistId"]))
-    return sorted(set(browse_ids)), sorted(set(playlist_ids))
+def run_case(label: str, params: dict[str, str], hl: str, gl: str) -> None:
+    with httpx.Client(headers=HEADERS, follow_redirects=True, timeout=30.0, http2=True) as client:
+        response = client.get(URL, params=params)
+        response.raise_for_status()
+        html = response.text
+        data = extract_json_object(html, "ytInitialData")
+        if not data:
+            print(f"CASE {label}: NO_INITIAL_DATA")
+            return
+        shelf = find_album_shelf(data)
+        if not shelf:
+            print(f"CASE {label}: NO_SHELF")
+            return
+        token = continuation_token(shelf.get("endpoint") or {})
+        api_key_match = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
+        version_match = re.search(r'"INNERTUBE_CLIENT_VERSION":"([^"]+)"', html)
+        client_version = version_match.group(1) if version_match else "2.20260925.00.00"
+        if not token or not api_key_match:
+            print(f"CASE {label}: NO_TOKEN_OR_KEY")
+            return
 
-
-def print_grid_items(body: dict, page: int) -> None:
-    items = []
-    for obj in walk(body):
-        grid = obj.get("gridRenderer") if isinstance(obj, dict) else None
-        if isinstance(grid, dict) and isinstance(grid.get("items"), list):
-            items = grid["items"]
-            break
-    print(f"PAGE {page} GRID_ITEMS={len(items)}")
-    for index, item in enumerate(items, 1):
-        if not isinstance(item, dict):
-            print(f"ITEM {page}.{index:02d} NON_DICT")
-            continue
-        renderer_keys = [key for key in item if key.endswith("Renderer") or key.endswith("ViewModel")]
-        print(f"ITEM {page}.{index:02d} TYPES={renderer_keys}")
-        for key in renderer_keys:
-            renderer = item.get(key)
-            if not isinstance(renderer, dict):
-                continue
-            title = text_of(renderer.get("title")).strip()
-            browse_ids, watch_playlist_ids = endpoint_ids(renderer)
-            direct_playlist = str(renderer.get("playlistId") or "")
-            video_id = str(renderer.get("videoId") or "")
-            content_id = str(renderer.get("contentId") or "")
-            print(
-                f"  {key} title={title!r} direct_playlist={direct_playlist!r} "
-                f"video_id={video_id!r} content_id={content_id!r} "
-                f"browse_ids={browse_ids} watch_playlist_ids={watch_playlist_ids}"
-            )
-
-
-with httpx.Client(headers=HEADERS, follow_redirects=True, timeout=30.0, http2=True) as client:
-    response = client.get(URL, params={"hl": "zh-CN", "gl": "US"})
-    response.raise_for_status()
-    html = response.text
-    data = extract_json_object(html, "ytInitialData")
-    if not data:
-        raise SystemExit("NO_INITIAL_DATA")
-    shelf = find_album_shelf(data)
-    if not shelf:
-        raise SystemExit("NO_ALBUM_SHELF")
-
-    initial_items = ((shelf.get("content") or {}).get("horizontalListRenderer") or {}).get("items") or []
-    print(f"INITIAL_ITEMS={len(initial_items)}")
-
-    token = continuation_token(shelf.get("endpoint") or {})
-    if not token:
-        raise SystemExit("NO_ALBUM_PANEL_TOKEN")
-
-    api_key_match = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
-    version_match = re.search(r'"INNERTUBE_CLIENT_VERSION":"([^"]+)"', html)
-    if not api_key_match:
-        raise SystemExit("NO_INNERTUBE_API_KEY")
-    client_version = version_match.group(1) if version_match else "2.20260925.00.00"
-
-    seen = set()
-    page = 0
-    while token and token not in seen and page < 10:
-        page += 1
-        seen.add(token)
-        follow = client.post(
-            f"https://www.youtube.com/youtubei/v1/browse?key={api_key_match.group(1)}",
-            json={
+        albums: dict[str, str] = {}
+        page = 0
+        seen = set()
+        while token and token not in seen and page < 10:
+            page += 1
+            seen.add(token)
+            payload = {
                 "context": {
                     "client": {
                         "clientName": "WEB",
                         "clientVersion": client_version,
-                        "hl": "zh-CN",
-                        "gl": "US",
+                        "hl": hl,
+                        "gl": gl,
                     }
                 },
                 "continuation": token,
-            },
-            headers={
-                "Origin": "https://www.youtube.com",
-                "Referer": str(response.url),
-                "X-Youtube-Client-Name": "1",
-                "X-Youtube-Client-Version": client_version,
-            },
-        )
-        follow.raise_for_status()
-        body = follow.json()
-        print(f"PAGE {page} RENDERERS={json.dumps(renderer_counts(body).most_common(20), ensure_ascii=False)}")
-        print_grid_items(body, page)
-        token = continuation_token(body)
-        print(f"PAGE {page} NEXT={bool(token)}")
+            }
+            follow = client.post(
+                f"https://www.youtube.com/youtubei/v1/browse?key={api_key_match.group(1)}",
+                json=payload,
+                headers={
+                    "Origin": "https://www.youtube.com",
+                    "Referer": str(response.url),
+                    "X-Youtube-Client-Name": "1",
+                    "X-Youtube-Client-Version": client_version,
+                },
+            )
+            follow.raise_for_status()
+            body = follow.json()
+            page_items = grid_playlists(body)
+            for pid, title in page_items:
+                albums.setdefault(pid, title)
+            print(f"CASE {label}: page={page} items={len(page_items)} unique={len(albums)} next={bool(continuation_token(body))}")
+            token = continuation_token(body)
+        print(f"CASE {label}: TOTAL={len(albums)}")
+        if len(albums) >= 38:
+            for index, (pid, title) in enumerate(albums.items(), 1):
+                print(f"CASE {label} ALBUM {index:02d} {pid} :: {title}")
+
+
+cases = [
+    ("default", {}, "en", "US"),
+    ("US", {"hl": "zh-CN", "gl": "US"}, "zh-CN", "US"),
+    ("HK", {"hl": "zh-HK", "gl": "HK"}, "zh-HK", "HK"),
+    ("TW", {"hl": "zh-TW", "gl": "TW"}, "zh-TW", "TW"),
+    ("SG", {"hl": "zh-CN", "gl": "SG"}, "zh-CN", "SG"),
+    ("GB", {"hl": "en-GB", "gl": "GB"}, "en-GB", "GB"),
+]
+for case in cases:
+    try:
+        run_case(*case)
+    except Exception as exc:
+        print(f"CASE {case[0]}: ERROR {type(exc).__name__}: {exc}")
