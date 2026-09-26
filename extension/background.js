@@ -9,12 +9,7 @@ let queue = [];
 let hostInfo = {};
 
 function broadcast() {
-  chrome.runtime.sendMessage({
-    type: "state",
-    connected,
-    queue,
-    hostInfo,
-  }).catch(() => {});
+  chrome.runtime.sendMessage({ type: "state", connected, queue, hostInfo }).catch(() => {});
 }
 
 function scheduleReconnect() {
@@ -128,10 +123,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
     if (message.type === "repairChannel") {
       const cookies = await youtubeCookies();
-      const result = await rpc("repair_channel", {
-        url: message.url,
-        cookies,
-      }, 10 * 60 * 1000);
+      sendResponse(await rpc("repair_channel", { url: message.url, cookies }, 10 * 60 * 1000));
+      return;
+    }
+    if (message.type === "retry") {
+      const result = await rpc("retry", { task_id: message.taskId });
+      queue = result.queue || queue;
       sendResponse(result);
       return;
     }
