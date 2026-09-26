@@ -32,6 +32,7 @@ STATE_PATH = APP_DIR / "state.json"
 COOKIE_PATH = APP_DIR / "youtube-cookies.txt"
 DEFAULT_DOWNLOAD_ROOT = Path.home() / "Downloads" / "YT-Autodownload"
 TERMINAL = {"done", "error", "cancelled"}
+LOG_PATH = APP_DIR / "host.log"
 
 
 def now_iso() -> str:
@@ -97,6 +98,33 @@ class Task:
     error: str = ""
     created_at: str = ""
     updated_at: str = ""
+
+
+class HostLogger:
+    """Keep yt-dlp diagnostics away from stdout, which belongs to Native Messaging."""
+
+    _lock = threading.Lock()
+
+    def _write(self, level: str, message: str) -> None:
+        try:
+            APP_DIR.mkdir(parents=True, exist_ok=True)
+            with self._lock, LOG_PATH.open("a", encoding="utf-8") as stream:
+                stream.write(f"[{now_iso()}] [{level}] {message}\n")
+        except Exception:
+            pass
+
+    def debug(self, message: str) -> None:
+        if message.startswith("[debug]"):
+            self._write("DEBUG", message)
+
+    def info(self, message: str) -> None:
+        self._write("INFO", message)
+
+    def warning(self, message: str) -> None:
+        self._write("WARN", message)
+
+    def error(self, message: str) -> None:
+        self._write("ERROR", message)
 
 
 class CancelledError(RuntimeError):
@@ -357,6 +385,7 @@ class QueueManager:
             "quiet": True,
             "no_warnings": False,
             "concurrent_fragment_downloads": 4,
+            "logger": HostLogger(),
         }
         if COOKIE_PATH.is_file():
             options["cookiefile"] = str(COOKIE_PATH)
