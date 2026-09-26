@@ -1,3 +1,4 @@
 yt-dlp>=2026.3.3
 imageio-ffmpeg>=0.6.0
 opencc-python-reimplemented>=0.1.7
+httpx[http2]>=0.28.1
