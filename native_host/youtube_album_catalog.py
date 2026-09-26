@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import re
+import time
 
 import httpx
 
@@ -95,17 +96,49 @@ def _channel_title(data: dict) -> str:
     return ""
 
 
+def _playlist_id_from_node(node: dict) -> str:
+    """Find a playlist id in one renderer without confusing channel browse ids for albums."""
+    direct = str(node.get("playlistId") or "").strip()
+    if direct:
+        return direct
+
+    for obj in _walk(node):
+        if not isinstance(obj, dict):
+            continue
+        watch = obj.get("watchEndpoint")
+        if isinstance(watch, dict):
+            playlist_id = str(watch.get("playlistId") or "").strip()
+            if playlist_id:
+                return playlist_id
+        browse = obj.get("browseEndpoint")
+        if isinstance(browse, dict):
+            browse_id = str(browse.get("browseId") or "").strip()
+            # Playlist browse ids are exposed as VL<playlist id> in current channel grids.
+            if browse_id.startswith("VL") and len(browse_id) > 2:
+                return browse_id[2:]
+    return ""
+
+
 def _album_from_lockup(lockup: dict) -> AlbumCard | None:
     if lockup.get("contentType") != "LOCKUP_CONTENT_TYPE_ALBUM":
         return None
     metadata = ((lockup.get("metadata") or {}).get("lockupMetadataViewModel") or {})
     title = _text(metadata.get("title")).strip()
-    playlist_id = str(lockup.get("contentId") or "").strip()
-    playback = (
-        (((lockup.get("itemPlayback") or {}).get("inlinePlayerData") or {}).get("onSelect") or {})
-        .get("innertubeCommand") or {}
-    )
-    playlist_id = str((playback.get("watchEndpoint") or {}).get("playlistId") or playlist_id).strip()
+    playlist_id = _playlist_id_from_node(lockup) or str(lockup.get("contentId") or "").strip()
+    if not title or not playlist_id:
+        return None
+    return AlbumCard(title=title, playlist_id=playlist_id)
+
+
+def _album_from_grid_playlist(renderer: dict) -> AlbumCard | None:
+    """Parse the expanded album dialog returned by the shelf continuation.
+
+    The channel home shelf uses lockupViewModel for the first visible cards. Opening the
+    browser's full "Albums & singles" panel returns gridPlaylistRenderer objects instead.
+    Ignoring this renderer was the reason only the first 12 albums were ever classified.
+    """
+    title = _text(renderer.get("title")).strip()
+    playlist_id = _playlist_id_from_node(renderer)
     if not title or not playlist_id:
         return None
     return AlbumCard(title=title, playlist_id=playlist_id)
@@ -113,12 +146,20 @@ def _album_from_lockup(lockup: dict) -> AlbumCard | None:
 
 def _collect_albums(node, albums: dict[str, AlbumCard]) -> None:
     for obj in _walk(node):
-        lockup = obj.get("lockupViewModel") if isinstance(obj, dict) else None
-        if not isinstance(lockup, dict):
+        if not isinstance(obj, dict):
             continue
-        card = _album_from_lockup(lockup)
-        if card:
-            albums.setdefault(card.playlist_id, card)
+
+        lockup = obj.get("lockupViewModel")
+        if isinstance(lockup, dict):
+            card = _album_from_lockup(lockup)
+            if card:
+                albums.setdefault(card.playlist_id, card)
+
+        grid = obj.get("gridPlaylistRenderer")
+        if isinstance(grid, dict):
+            card = _album_from_grid_playlist(grid)
+            if card:
+                albums.setdefault(card.playlist_id, card)
 
 
 def _continuation_token(node) -> str:
@@ -149,17 +190,35 @@ def _find_album_shelf(data: dict) -> dict:
     return fallback
 
 
+def _get_channel_page(client: httpx.Client, channel_url: str, *, attempts: int = 3) -> httpx.Response:
+    """Fetch the channel page with a small retry for transient/challenge-shaped responses."""
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            response = client.get(channel_url, params={"hl": "zh-CN", "gl": "US"})
+            response.raise_for_status()
+            if _extract_json_object(response.text, "ytInitialData"):
+                return response
+            last_error = RuntimeError("YouTube 页面未找到 ytInitialData")
+        except Exception as exc:
+            last_error = exc
+        if attempt < attempts:
+            time.sleep(float(attempt))
+    raise RuntimeError(str(last_error or "读取 YouTube 频道页面失败"))
+
+
 def fetch_channel_album_cards(channel_url: str, *, max_continuations: int = 20) -> tuple[str, list[AlbumCard], bool]:
     """Return (channel_title, albums, album_shelf_found) from the public channel page.
 
     The data source is the same ytInitialData / youtubei browse payload rendered by the
-    browser. A network/parsing failure raises instead of silently classifying music as
+    browser. The first shelf cards are lockupViewModel objects; opening the full album
+    panel returns gridPlaylistRenderer objects and may continue onto additional pages.
+    A network/parsing failure raises instead of silently classifying music as
     '_其他上传'. Channels that genuinely have no album shelf return an empty list.
     """
     channel_url = channel_url.rstrip("/")
     with httpx.Client(headers=DEFAULT_HEADERS, follow_redirects=True, timeout=30.0, http2=True) as client:
-        response = client.get(channel_url, params={"hl": "zh-CN", "gl": "US"})
-        response.raise_for_status()
+        response = _get_channel_page(client, channel_url)
         html = response.text
         data = _extract_json_object(html, "ytInitialData")
         if not data:
@@ -212,5 +271,8 @@ def fetch_channel_album_cards(channel_url: str, *, max_continuations: int = 20) 
             body = follow.json()
             _collect_albums(body, albums)
             token = _continuation_token(body)
+
+        if token and pages >= max_continuations:
+            raise RuntimeError(f"专辑分页超过安全上限 {max_continuations}，拒绝返回不完整结果")
 
         return title, list(albums.values()), True
