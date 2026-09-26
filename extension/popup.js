@@ -68,7 +68,7 @@ function updateDetected() {
   const hints = {
     video: "将下载当前视频",
     playlist: "将下载列表内全部公开视频",
-    channel: "将识别专辑/单曲并按目录分类；其他上传单独归档",
+    channel: "将读取频道页面的“专辑和单曲”并按专辑分类；其他上传单独归档",
     unknown: "请打开 YouTube 视频、播放列表或公开频道",
   };
   sourceHint.textContent = hints[detected.kind] || hints.unknown;
@@ -99,8 +99,9 @@ function renderState(nextState) {
   hostState.className = `host-state ${state.connected ? "online" : "offline"}`;
   const info = state.hostInfo || {};
   const albumText = info.album_organization ? " · 专辑分类: 已启用" : "";
+  const retryText = info.manual_retry ? ` · 自动重试 ${info.auto_retry_count || 0} 次 + 手动重试` : "";
   hostDetails.textContent = state.connected
-    ? `Host ${info.version || "-"} · 下载目录：${info.download_root || "-"}${albumText}${info.node ? ` · Node: ${info.node}` : " · 未检测到 Node.js（部分 YouTube 资源可能受影响）"}`
+    ? `Host ${info.version || "-"} · 下载目录：${info.download_root || "-"}${albumText}${retryText}${info.node ? ` · Node: ${info.node}` : " · 未检测到 Node.js（部分 YouTube 资源可能受影响）"}`
     : "首次使用请运行仓库中的 Install-Windows.bat，并在 chrome://extensions 加载 extension 目录。";
   renderQueue(state.queue || []);
   updateDetected();
@@ -160,13 +161,20 @@ function renderQueue(items) {
       const cancel = document.createElement("button");
       cancel.className = "ghost";
       cancel.textContent = "取消";
-      cancel.addEventListener("click", () => send({ type: "cancel", taskId: task.id }));
+      cancel.addEventListener("click", () => send({ type: "cancel", taskId: task.id }).catch((e) => setMessage(e.message, "error")));
       actions.appendChild(cancel);
     } else {
+      if (["error", "cancelled"].includes(task.status)) {
+        const retry = document.createElement("button");
+        retry.className = "ghost";
+        retry.textContent = "重试";
+        retry.addEventListener("click", () => send({ type: "retry", taskId: task.id }).catch((e) => setMessage(e.message, "error")));
+        actions.appendChild(retry);
+      }
       const remove = document.createElement("button");
       remove.className = "ghost";
       remove.textContent = "移除";
-      remove.addEventListener("click", () => send({ type: "remove", taskId: task.id }));
+      remove.addEventListener("click", () => send({ type: "remove", taskId: task.id }).catch((e) => setMessage(e.message, "error")));
       actions.appendChild(remove);
     }
     queueElement.appendChild(card);
@@ -227,7 +235,7 @@ repairButton.addEventListener("click", async () => {
   if (detected.kind !== "channel" || repairing) return;
   repairing = true;
   updateDetected();
-  setMessage("正在读取“专辑和单曲”并整理已下载文件；文件多时需要一些时间…");
+  setMessage("正在读取频道页面的“专辑和单曲”并整理已下载文件；不会重新下载媒体…");
   try {
     const response = await send({ type: "repairChannel", url: detected.normalizedUrl });
     const repair = response.repair || {};
