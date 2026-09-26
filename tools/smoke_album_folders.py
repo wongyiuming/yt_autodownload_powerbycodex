@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "native_host"))
 
 from album_support import safe_component  # noqa: E402
+from channel_enhancements import assign_album_folders  # noqa: E402
 from youtube_album_catalog import fetch_channel_album_cards  # noqa: E402
 
 try:
@@ -35,11 +36,16 @@ missing = expected_titles - actual_titles
 if missing:
     raise SystemExit(f"missing known album titles: {sorted(missing)}")
 
+assigned = assign_album_folders(cards)
+folder_names = [folder for _card, folder in assigned]
+if len(set(name.casefold() for name in folder_names)) != EXPECTED_ALBUMS:
+    raise SystemExit("production folder naming did not produce 37 unique release folders")
+
 with tempfile.TemporaryDirectory(prefix="yt-album-smoke-") as temp:
     root = Path(temp) / safe_component(channel_title, "频道")
     root.mkdir(parents=True)
-    for card in cards:
-        (root / safe_component(card.title, "未命名专辑")).mkdir(parents=True, exist_ok=True)
+    for _card, folder in assigned:
+        (root / folder).mkdir(parents=True, exist_ok=False)
 
     created = [path for path in root.iterdir() if path.is_dir()]
     print(f"created_folders={len(created)}")
@@ -48,11 +54,10 @@ with tempfile.TemporaryDirectory(prefix="yt-album-smoke-") as temp:
         raise SystemExit(f"expected {EXPECTED_ALBUMS} unique album folders, created {len(created)}")
 
     for title in sorted(expected_titles):
-        folder = safe_component(title, "未命名专辑")
-        path = root / folder
-        print(f"CHECK_FOLDER {path}")
-        if not path.is_dir():
-            raise SystemExit(f"folder was not created: {folder}")
+        matching = [path for path in created if path.name == safe_component(title, "未命名专辑") or path.name.startswith(f"{safe_component(title, '未命名专辑')} [")]
+        print(f"CHECK_FOLDER {title}: {[path.name for path in matching]}")
+        if not matching:
+            raise SystemExit(f"folder was not created for known album: {title}")
 
 stone = next(card for card in cards if card.title == "石頭記")
 options = {
@@ -69,4 +74,4 @@ print(f"stone_album_playlist={stone.playlist_id} tracks={len(entries)}")
 if not entries:
     raise SystemExit("album playlist did not expose track metadata")
 
-print("SMOKE_OK: 37 browser-visible releases -> 37 release folders -> playlist track metadata")
+print("SMOKE_OK: 37 browser-visible releases -> 37 unique release folders -> playlist track metadata")
