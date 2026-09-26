@@ -3,33 +3,42 @@ name: Windows package
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r native_host/requirements.txt pyinstaller
-      - name: Build Native Messaging host
+
+      - name: Freeze Native Messaging host
         shell: pwsh
         run: |
           python -m PyInstaller --clean --onefile --name yt_autodownload_host `
             --collect-all yt_dlp --collect-all imageio_ffmpeg native_host/host.py
           Copy-Item dist\yt_autodownload_host.exe native_host\yt_autodownload_host.exe
+
       - name: Bundle Node runtime
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force runtime | Out-Null
           $node = (Get-Command node.exe).Source
           Copy-Item $node runtime\node.exe
-      - name: Package
+
+      - name: Package Windows distribution
         shell: pwsh
         run: |
           $files = @(
@@ -37,8 +46,39 @@ jobs:
             'Install-Windows.bat', 'Uninstall-Windows.bat', 'README.md'
           )
           Compress-Archive -Path $files -DestinationPath yt_autodownload_windows.zip -Force
-      - uses: actions/upload-artifact@v4
+          $hash = (Get-FileHash yt_autodownload_windows.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  yt_autodownload_windows.zip" | Set-Content -Path SHA256SUMS.txt -Encoding ascii
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
         with:
           name: yt_autodownload_windows
-          path: yt_autodownload_windows.zip
+          path: |
+            yt_autodownload_windows.zip
+            SHA256SUMS.txt
           retention-days: 30
+
+      - name: Publish v0.1.0 release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release-v0.1.0]')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v0.1.0 `
+            yt_autodownload_windows.zip `
+            SHA256SUMS.txt `
+            --target "${{ github.sha }}" `
+            --title "v0.1.0" `
+            --notes "First usable Chrome-first Windows release. Includes the unpacked Chrome MV3 extension, frozen Native Messaging host, bundled Node runtime, install/uninstall scripts, yt-dlp queue, single-video/playlist/public-channel detection, MP4 video and MP3 audio modes."
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            yt_autodownload_windows.zip `
+            SHA256SUMS.txt `
+            --title "${{ github.ref_name }}" `
+            --generate-notes
