@@ -16,6 +16,30 @@ def _clean_channel_title(value: str) -> str:
     return text.strip() or "频道"
 
 
+def assign_album_folders(cards) -> list[tuple[object, str]]:
+    """Assign one unique filesystem folder to every browser-visible release.
+
+    YouTube can expose different releases with the same display title. Keep the plain
+    title for the first occurrence, then disambiguate later releases with the tail of
+    their playlist id. This is the exact naming policy used by production downloads and
+    by the real-channel smoke test.
+    """
+    used_folders: dict[str, str] = {}
+    result: list[tuple[object, str]] = []
+
+    for card in cards:
+        playlist_id = str(card.playlist_id).strip()
+        title = str(card.title).strip() or playlist_id or "未命名专辑"
+        folder = album_support.safe_component(title, "未命名专辑")
+        old_id = used_folders.get(folder.casefold())
+        if old_id is not None and old_id != playlist_id:
+            folder = album_support.safe_component(f"{title} [{playlist_id[-8:]}]")
+        used_folders[folder.casefold()] = playlist_id
+        result.append((card, folder))
+
+    return result
+
+
 def install_channel_enhancements() -> None:
     if getattr(album_support.AlbumOrganizer, "_http_album_catalog_installed", False):
         return
@@ -24,17 +48,11 @@ def install_channel_enhancements() -> None:
         browser_title, cards, shelf_found = fetch_channel_album_cards(channel_url)
         channel_title = _clean_channel_title(browser_title or "频道")
         albums = []
-        used_folders: dict[str, str] = {}
 
-        for card in cards:
+        for card, folder in assign_album_folders(cards):
             playlist_id = card.playlist_id
             url = card.url
             title = card.title.strip() or playlist_id
-            folder = album_support.safe_component(title, "未命名专辑")
-            old_id = used_folders.get(folder.casefold())
-            if old_id is not None and old_id != playlist_id:
-                folder = album_support.safe_component(f"{title} [{playlist_id[-8:]}]")
-            used_folders[folder.casefold()] = playlist_id
 
             info = self._flat(url)
             tracks = []
