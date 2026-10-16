@@ -1,7 +1,17 @@
 const HOST_NAME = "com.wongyiuming.yt_autodownload";
+const EXPECTED_HOST_VERSION = chrome.runtime.getManifest().version;
+
+function hostVersionMatches(info) {
+  return info?.version === EXPECTED_HOST_VERSION;
+}
+
+function hostVersionError(info) {
+  return `Host 版本不匹配：当前 ${info?.version || "未知"}，需要 ${EXPECTED_HOST_VERSION}。请重新运行最新版 Install-Windows.bat。`;
+}
 
 let port = null;
 let connected = false;
+let compatible = false;
 let reconnectTimer = null;
 let seq = 1;
 const pending = new Map();
@@ -9,7 +19,7 @@ let queue = [];
 let hostInfo = {};
 
 function broadcast() {
-  chrome.runtime.sendMessage({ type: "state", connected, queue, hostInfo }).catch(() => {});
+  chrome.runtime.sendMessage({ type: "state", connected, compatible, expectedHostVersion: EXPECTED_HOST_VERSION, queue, hostInfo }).catch(() => {});
 }
 
 function scheduleReconnect() {
@@ -44,12 +54,17 @@ function connectHost() {
       else resolve(message);
     }
     if (message.event === "queue") queue = message.queue || [];
-    if (message.event === "hello" || message.host) hostInfo = message.host || hostInfo;
+    if (message.event === "hello" || message.host) {
+      hostInfo = message.host || hostInfo;
+      compatible = hostVersionMatches(hostInfo);
+    }
     broadcast();
   });
 
   activePort.onDisconnect.addListener(() => {
     if (port !== activePort) return;
+    compatible = false;
+    hostInfo = {};
     const error = chrome.runtime.lastError?.message || "Native host disconnected";
     for (const { reject, timeout } of pending.values()) {
       clearTimeout(timeout);
@@ -63,8 +78,10 @@ function connectHost() {
   });
 
   connected = true;
+  compatible = false;
   rpc("hello", {}).then((message) => {
     hostInfo = message.host || {};
+    compatible = hostVersionMatches(hostInfo);
     queue = message.queue || queue;
     broadcast();
   }).catch(() => {});
@@ -73,6 +90,9 @@ function connectHost() {
 function rpc(action, payload = {}, timeoutMs = 30000) {
   connectHost();
   if (!port) return Promise.reject(new Error("本机下载组件未连接"));
+  if (!["hello", "list"].includes(action) && !compatible) {
+    return Promise.reject(new Error(hostVersionError(hostInfo)));
+  }
   const id = `r${Date.now()}_${seq++}`;
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -102,14 +122,17 @@ async function reconnectHost() {
     try { oldPort.disconnect(); } catch (_) {}
   }
   connected = false;
+  compatible = false;
   hostInfo = {};
   broadcast();
   connectHost();
   const result = await rpc("hello", {}, 30000);
   hostInfo = result.host || {};
+  compatible = hostVersionMatches(hostInfo);
   queue = result.queue || queue;
   broadcast();
-  return { ok: true, host: hostInfo, queue, connected: true };
+  if (!compatible) throw new Error(hostVersionError(hostInfo));
+  return { ok: true, host: hostInfo, queue, connected: true, compatible: true };
 }
 
 async function youtubeCookies() {
@@ -123,7 +146,7 @@ async function youtubeCookies() {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     if (message.type === "getState") {
-      sendResponse({ connected, queue, hostInfo });
+      sendResponse({ connected, compatible, expectedHostVersion: EXPECTED_HOST_VERSION, queue, hostInfo });
       return;
     }
     if (message.type === "reconnectHost") {
@@ -134,7 +157,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const result = await rpc("list");
       queue = result.queue || [];
       hostInfo = result.host || hostInfo;
-      sendResponse({ connected: true, queue, hostInfo });
+      sendResponse({ connected: true, compatible, expectedHostVersion: EXPECTED_HOST_VERSION, queue, hostInfo });
       return;
     }
     if (message.type === "enqueue") {

@@ -166,7 +166,7 @@ def runtime_diagnostics(node_path: str | None) -> dict:
     except importlib.metadata.PackageNotFoundError:
         ejs_version = ""
     return {
-        "host_version": "1.2.3",
+        "host_version": "1.2.4",
         "yt_dlp_version": YT_DLP_VERSION,
         "ejs_available": importlib.util.find_spec("yt_dlp_ejs") is not None,
         "ejs_version": ejs_version,

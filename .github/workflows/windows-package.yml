@@ -35,6 +35,7 @@ jobs:
           python -m compileall -q native_host tools
           node --check extension/background.js
           node --check extension/popup.js
+          node tools/test_extension_host_version.js
 
       - name: Smoke test real channel album folders
         # External website behavior must not mask a passing offline regression suite.
