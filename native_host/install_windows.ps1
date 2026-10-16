@@ -179,10 +179,16 @@ foreach ($ExistingHost in $RunningHosts) {
     if ([string]::Equals($ExistingPath, $InstalledExe, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
     $LegacyProcesses += $ExistingHost
     Write-Host "Disconnecting old Host PID $($ExistingHost.ProcessId): $ExistingPath"
-    Stop-Process -Id $ExistingHost.ProcessId -Force -ErrorAction Stop
+    try {
+        Stop-Process -Id $ExistingHost.ProcessId -Force -ErrorAction Stop
+    } catch {
+        # A one-file PyInstaller Host can have parent/child processes that
+        # exit together. Do not fail if a sibling was already terminated.
+        if (Get-Process -Id $ExistingHost.ProcessId -ErrorAction SilentlyContinue) { throw }
+    }
 }
 if ($LegacyProcesses.Count -gt 0) {
-    Start-Sleep -Milliseconds 350
+    Start-Sleep -Milliseconds 650
     foreach ($OldHost in $LegacyProcesses) {
         if (Get-Process -Id $OldHost.ProcessId -ErrorAction SilentlyContinue) {
             throw "Old Host PID $($OldHost.ProcessId) did not exit; close Chrome and rerun installation."
