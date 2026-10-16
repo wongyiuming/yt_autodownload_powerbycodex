@@ -7,6 +7,7 @@ import json
 import subprocess
 import sys
 import traceback
+from pathlib import Path
 
 from album_support import install_album_support
 from archive_location import install_archive_location
@@ -37,9 +38,9 @@ def main() -> int:
         node_path = QueueManager._find_node()
         options = {
             "quiet": True, "no_warnings": False, "skip_download": True,
-            "noplaylist": True, "verbose": True,
+            "noplaylist": True, "verbose": True, "logger": HostLogger(),
         }
-        options.update(youtube_options(node_path, __import__("pathlib").Path(os.devnull)))
+        options.update(youtube_options(node_path, Path(os.devnull)))
         try:
             info = extract_with_fallback(options, sys.argv[2])
             print(json.dumps({
