@@ -16,6 +16,7 @@ class QueueCookieTests(unittest.TestCase):
     def setUp(self):
         self.m = host_legacy.QueueManager.__new__(host_legacy.QueueManager)
         self.m.tasks = []
+        self.m.cancelled = set()
         self.m.lock = threading.RLock()
         self.m.wake = Mock()
         self.m.emit = Mock()

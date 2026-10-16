@@ -19,7 +19,7 @@ if ($Extension.version -ne $Health.host_version) { throw "Installed extension mi
 
 # Lock the old executable with a no-sharing file handle. Reinstalling the
 # same release must succeed without trying to overwrite this running binary.
-$Lock = [System.IO.File]::Open($Manifest.path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+$Lock = [System.IO.File]::Open($Manifest.path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
 try {
     & $Installer -NoLaunch
 } finally {
