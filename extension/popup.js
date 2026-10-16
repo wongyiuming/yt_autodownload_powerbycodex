@@ -15,6 +15,11 @@ let detected = { kind: "unknown", normalizedUrl: "", label: "未识别" };
 let state = { connected: false, queue: [], hostInfo: {} };
 let currentTitle = "";
 let repairing = false;
+const expectedHostVersion = chrome.runtime.getManifest().version;
+
+function hostReady() {
+  return state.connected && state.hostInfo?.version === expectedHostVersion;
+}
 
 function classifyYoutubeUrl(raw) {
   try {
@@ -73,9 +78,9 @@ function updateDetected() {
     unknown: "请打开 YouTube 视频、播放列表或公开频道",
   };
   sourceHint.textContent = hints[detected.kind] || hints.unknown;
-  enqueueButton.disabled = detected.kind === "unknown" || !state.connected || repairing;
+  enqueueButton.disabled = detected.kind === "unknown" || !hostReady() || repairing;
   channelTools.hidden = detected.kind !== "channel";
-  repairButton.disabled = detected.kind !== "channel" || !state.connected || repairing;
+  repairButton.disabled = detected.kind !== "channel" || !hostReady() || repairing;
 }
 
 function selectedMode() {
@@ -96,9 +101,12 @@ function setMessage(text, type = "") {
 
 function renderState(nextState) {
   state = { ...state, ...nextState };
-  hostState.textContent = state.connected ? "本机组件已连接" : "本机组件未连接";
-  hostState.className = `host-state ${state.connected ? "online" : "offline"}`;
   const info = state.hostInfo || {};
+  const ready = hostReady();
+  hostState.textContent = !state.connected ? "本机组件未连接"
+    : ready ? `Host ${expectedHostVersion} 已连接`
+    : `Host 版本错误 (${info.version || "未知"} ≠ ${expectedHostVersion})`;
+  hostState.className = `host-state ${ready ? "online" : "offline"}`;
   const albumText = info.album_organization ? " · 专辑分类: 已启用" : "";
   const retryText = info.manual_retry ? ` · 自动重试 ${info.auto_retry_count || 0} 次 + 手动重试` : "";
   const ytVersion = info.yt_dlp_version ? ` · yt-dlp: ${info.yt_dlp_version}` : "";
@@ -106,7 +114,7 @@ function renderState(nextState) {
   const nodeVersion = info.node_version ? ` (${info.node_version})` : "";
   const nodeWarning = info.node_compatible === false ? " [版本过旧/不可用]" : "";
   hostDetails.textContent = state.connected
-    ? `Host ${info.version || "-"} · 下载目录：${info.download_root || "-"}${albumText}${retryText}${ytVersion}${ejsStatus}${info.node ? ` · Node: ${info.node}${nodeVersion}${nodeWarning}` : " · 未检测到 Node.js（部分 YouTube 资源可能受影响）"}`
+    ? `${ready ? "" : "⚠ 正在连接旧 Host，已禁止下载。重新运行最新安装器，它会检查注册并重启旧进程。 · "}Host ${info.version || "-"} · 下载目录：${info.download_root || "-"}${albumText}${retryText}${ytVersion}${ejsStatus}${info.node ? ` · Node: ${info.node}${nodeVersion}${nodeWarning}` : " · 未检测到 Node.js（部分 YouTube 资源可能受影响）"}`
     : "首次使用请运行仓库中的 Install-Windows.bat，并在 chrome://extensions 加载 extension 目录。";
   renderQueue(state.queue || []);
   updateDetected();
@@ -272,7 +280,10 @@ document.getElementById("reconnectHost").addEventListener("click", async () => {
   try {
     const result = await send({ type: "reconnectHost" });
     renderState({ ...result, hostInfo: result.host });
-    setMessage(`已连接 Host ${result.host?.version || "未知版本"}。`, "ok");
+    if (result.host?.version !== expectedHostVersion) {
+      throw new Error(`当前 Host ${result.host?.version || "未知"}，需要 ${expectedHostVersion}。请重新运行安装器。`);
+    }
+    setMessage(`已连接 Host ${result.host.version}（版本验证通过）。`, "ok");
   } catch (error) {
     setMessage(error.message || String(error), "error");
   }
