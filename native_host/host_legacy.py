@@ -283,13 +283,15 @@ class QueueManager:
 
     def _write_cookies(self, cookies: list[dict]) -> None:
         if not cookies:
+            COOKIE_PATH.unlink(missing_ok=True)
             return
         lines = ["# Netscape HTTP Cookie File"]
         for cookie in cookies:
             if not isinstance(cookie, dict):
                 continue
             domain = str(cookie.get("domain") or "")
-            if "youtube.com" not in domain:
+            host = domain.lstrip(".").lower()
+            if host != "youtube.com" and not host.endswith(".youtube.com"):
                 continue
             lines.append("\t".join([
                 domain,
@@ -301,7 +303,12 @@ class QueueManager:
                 str(cookie.get("value") or "").replace("\t", "").replace("\n", ""),
             ]))
         if len(lines) > 1:
-            COOKIE_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+            COOKIE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            temporary = COOKIE_PATH.with_name(COOKIE_PATH.name + ".tmp")
+            temporary.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+            temporary.replace(COOKIE_PATH)
+        else:
+            COOKIE_PATH.unlink(missing_ok=True)
 
     def _worker_loop(self) -> None:
         while True:

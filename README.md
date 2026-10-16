@@ -152,13 +152,24 @@ Install-Windows.bat
 
 源码依赖见 `native_host/requirements.txt`：
 
-- `yt-dlp>=2026.3.3`：这个最低版本包含当前 YouTube Music album 解析修复；
+- `yt-dlp[default]==2026.10.10.233141.dev0`：固定包含 2026-10-10 上游 YouTube reload 修复的 nightly；`default` 自动安装匹配的 `yt-dlp-ejs`；
 - `imageio-ffmpeg`：提供 FFmpeg binary；
 - `opencc-python-reimplemented`：保留旧项目的中文文件名处理能力。
 
 Windows Action 会把 Native host 用 PyInstaller **冻结/打包**成单文件 EXE，并附带 Node.js runtime。这里不是 Go/C/Rust 那种必须编译的项目；这样做只是让最终用户无需安装 Python 环境。
 
 ## 诊断
+
+此版本的 Native Host 是 1.2.1，Windows 发行版为 v0.1.5。运行以下命令无需打开 Chrome、无需 Cookie、不会下载视频：
+
+```powershell
+& "$env:LOCALAPPDATA\YTAutodownload\bin\yt_autodownload_host.exe" --diagnostics
+```
+
+输出包括 `yt_dlp_version`、`ejs_available`、`node_version` 和 `node_compatible`。安装包构建时会验证 EJS 已冻结打包、Node.js 版本满足至少 v22 的要求。
+
+公开内容如果遇到 YouTube 的 `The page needs to be reloaded`，程序会仅针对这一错误自动尝试一次不携带 Cookie 的访问；登录专属资源仍需要有效的浏览器 Cookie。每次从 Chrome 添加任务时如果没有获取到 Cookie，旧缓存会被清除。稳定重现的 reload 不再反复自动重试。
+
 
 ```text
 %LOCALAPPDATA%\YTAutodownload\host.log

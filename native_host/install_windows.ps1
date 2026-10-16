@@ -40,7 +40,7 @@ if ($Prebuilt) {
     & $VenvPython -m PyInstaller --clean --onefile --name yt_autodownload_host `
         --distpath $BinDir --workpath (Join-Path $InstallDir "build") `
         --specpath (Join-Path $InstallDir "build") `
-        --collect-all yt_dlp --collect-all imageio_ffmpeg `
+        --collect-all yt_dlp --collect-all yt_dlp_ejs --collect-all imageio_ffmpeg `
         (Join-Path $Root "native_host\host.py")
 }
 

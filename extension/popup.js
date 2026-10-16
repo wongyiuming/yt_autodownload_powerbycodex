@@ -100,8 +100,12 @@ function renderState(nextState) {
   const info = state.hostInfo || {};
   const albumText = info.album_organization ? " · 专辑分类: 已启用" : "";
   const retryText = info.manual_retry ? ` · 自动重试 ${info.auto_retry_count || 0} 次 + 手动重试` : "";
+  const ytVersion = info.yt_dlp_version ? ` · yt-dlp: ${info.yt_dlp_version}` : "";
+  const ejsStatus = info.ejs_available === true ? " · EJS: 已内置" : info.ejs_available === false ? " · EJS: 缺失" : "";
+  const nodeVersion = info.node_version ? ` (${info.node_version})` : "";
+  const nodeWarning = info.node_compatible === false ? " [版本过旧/不可用]" : "";
   hostDetails.textContent = state.connected
-    ? `Host ${info.version || "-"} · 下载目录：${info.download_root || "-"}${albumText}${retryText}${info.node ? ` · Node: ${info.node}` : " · 未检测到 Node.js（部分 YouTube 资源可能受影响）"}`
+    ? `Host ${info.version || "-"} · 下载目录：${info.download_root || "-"}${albumText}${retryText}${ytVersion}${ejsStatus}${info.node ? ` · Node: ${info.node}${nodeVersion}${nodeWarning}` : " · 未检测到 Node.js（部分 YouTube 资源可能受影响）"}`
     : "首次使用请运行仓库中的 Install-Windows.bat，并在 chrome://extensions 加载 extension 目录。";
   renderQueue(state.queue || []);
   updateDetected();

@@ -14,6 +14,7 @@ import threading
 from urllib.parse import parse_qs, urlsplit
 
 import yt_dlp
+from youtube_runtime import download_with_fallback, extract_with_fallback, youtube_options
 
 APP_DIR = Path(os.getenv("LOCALAPPDATA") or Path.home()) / "YTAutodownload"
 COOKIE_PATH = APP_DIR / "youtube-cookies.txt"
@@ -346,27 +347,17 @@ class AlbumOrganizer:
             })
         else:
             options.update({"format": "bv*+ba/b", "merge_output_format": "mp4"})
-        with yt_dlp.YoutubeDL(options) as ydl:
-            code = ydl.download([url])
-            if code:
-                raise RuntimeError(f"yt-dlp 返回错误码 {code}")
+        download_with_fallback(options, url)
 
     def _flat(self, url: str) -> dict:
         options = self._base_options()
         options.update({"extract_flat": "in_playlist", "skip_download": True, "ignoreerrors": True})
-        with yt_dlp.YoutubeDL(options) as ydl:
-            info = ydl.extract_info(url, download=False)
+        info = extract_with_fallback(options, url)
         return info if isinstance(info, dict) else {}
 
     def _base_options(self) -> dict:
         options = {"quiet": True, "no_warnings": False, "logger": self.log}
-        if COOKIE_PATH.is_file():
-            options["cookiefile"] = str(COOKIE_PATH)
-        if self.m.node_path:
-            options.update({
-                "no_plugins": True, "remote_components": {"ejs:github"},
-                "js_runtimes": {"node": {"path": self.m.node_path}},
-            })
+        options.update(youtube_options(self.m.node_path, COOKIE_PATH))
         return options
 
     def _mode_root(self, mode: str) -> Path:

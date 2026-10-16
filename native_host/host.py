@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import subprocess
 import sys
 import traceback
@@ -12,6 +13,7 @@ from archive_location import install_archive_location
 from channel_enhancements import install_channel_enhancements
 from host_legacy import CancelledError, HostLogger, NativeWriter, QueueManager, read_message
 from runtime_enhancements import install_runtime_enhancements, install_version_info
+from youtube_runtime import runtime_diagnostics
 
 # Base downloader/retry first; channel album logic wraps it afterwards.
 install_runtime_enhancements(QueueManager, CancelledError)
@@ -23,6 +25,9 @@ install_version_info(QueueManager)
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--diagnostics":
+        print(json.dumps(runtime_diagnostics(QueueManager._find_node()), ensure_ascii=False))
+        return 0
     writer = NativeWriter()
     manager = QueueManager(writer)
     writer.send({"event": "hello", "host": manager.host_info(), "queue": manager.snapshot()})

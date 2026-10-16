@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import time
-
-import yt_dlp
+import re
 
 import host_legacy
+from youtube_runtime import (NonRetryableYoutubeError, download_with_fallback,
+                             runtime_diagnostics, youtube_options)
 
 AUTO_RETRY_COUNT = 2
 AUTO_RETRY_DELAYS = (3, 8)
@@ -71,8 +72,8 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
                     cancelled = True
                     break
                 except Exception as exc:
-                    final_error = str(exc).strip()[-500:]
-                    if attempt >= AUTO_RETRY_COUNT:
+                    final_error = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", str(exc)).strip()[-500:]
+                    if isinstance(exc, NonRetryableYoutubeError) or attempt >= AUTO_RETRY_COUNT:
                         break
                     delay = AUTO_RETRY_DELAYS[min(attempt, len(AUTO_RETRY_DELAYS) - 1)]
                     with self.lock:
@@ -152,14 +153,7 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
             "concurrent_fragment_downloads": 4,
             "logger": host_legacy.HostLogger(),
         }
-        if host_legacy.COOKIE_PATH.is_file():
-            options["cookiefile"] = str(host_legacy.COOKIE_PATH)
-        if self.node_path:
-            options.update({
-                "no_plugins": True,
-                "remote_components": {"ejs:github"},
-                "js_runtimes": {"node": {"path": self.node_path}},
-            })
+        options.update(youtube_options(self.node_path, host_legacy.COOKIE_PATH))
         if task.mode == "audio":
             options.update({
                 "format": "bestaudio/best",
@@ -172,10 +166,7 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
         else:
             options.update({"format": "bv*+ba/b", "merge_output_format": "mp4"})
 
-        with yt_dlp.YoutubeDL(options) as ydl:
-            code = ydl.download([task.url])
-            if code:
-                raise RuntimeError(f"yt-dlp 返回错误码 {code}")
+        download_with_fallback(options, task.url)
 
     queue_manager_cls.retry = retry
     queue_manager_cls._worker_loop = worker_loop
@@ -190,7 +181,8 @@ def install_version_info(queue_manager_cls) -> None:
     def host_info(self):
         info = original(self)
         info.update({
-            "version": "1.2.0",
+            "version": "1.2.1",
+            **runtime_diagnostics(self.node_path),
             "album_organization": True,
             "auto_retry_count": AUTO_RETRY_COUNT,
             "manual_retry": True,

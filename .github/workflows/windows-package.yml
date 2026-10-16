@@ -24,6 +24,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r native_host/requirements.txt pyinstaller
 
+      - name: Offline regression tests
+        run: python -m unittest discover -s tests -v
+
       - name: Syntax checks
         shell: pwsh
         run: |
@@ -32,13 +35,15 @@ jobs:
           node --check extension/popup.js
 
       - name: Smoke test real channel album folders
+        # External website behavior must not mask a passing offline regression suite.
+        continue-on-error: true
         run: python tools/smoke_album_folders.py
 
       - name: Freeze Native Messaging host
         shell: pwsh
         run: |
           python -m PyInstaller --clean --onefile --name yt_autodownload_host `
-            --collect-all yt_dlp --collect-all imageio_ffmpeg native_host/host.py
+            --collect-all yt_dlp --collect-all yt_dlp_ejs --collect-all imageio_ffmpeg native_host/host.py
           Copy-Item dist\yt_autodownload_host.exe native_host\yt_autodownload_host.exe
 
       - name: Bundle Node runtime
@@ -47,6 +52,15 @@ jobs:
           New-Item -ItemType Directory -Force runtime | Out-Null
           $node = (Get-Command node.exe).Source
           Copy-Item $node runtime\node.exe
+
+      - name: Verify frozen downloader dependencies
+        shell: pwsh
+        run: |
+          $health = (& .\dist\yt_autodownload_host.exe --diagnostics | ConvertFrom-Json)
+          $health | Format-List
+          if (-not $health.ejs_available) { throw "Frozen host is missing yt-dlp-ejs" }
+          if (-not $health.node_compatible) { throw "Bundled Node.js must be >=22" }
+          if (-not $health.yt_dlp_version.StartsWith("2026.10.10.233141")) { throw "Unexpected yt-dlp version" }
 
       - name: Package Windows distribution
         shell: pwsh
