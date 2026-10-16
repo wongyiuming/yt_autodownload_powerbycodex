@@ -47,10 +47,10 @@ class _RecordingLogger:
         self._forward("error", message)
 
 
-def youtube_options(node_path: str | None, cookie_path: Path) -> dict:
+def youtube_options(node_path: str | None, cookie_path: Path, *, use_cookies: bool = False) -> dict:
     """Use the bundled EJS solver with Node; GitHub is a backup distribution."""
     options: dict = {"no_plugins": True}
-    if cookie_path.is_file():
+    if use_cookies and cookie_path.is_file():
         options["cookiefile"] = str(cookie_path)
     if node_path:
         options.update({
@@ -166,7 +166,7 @@ def runtime_diagnostics(node_path: str | None) -> dict:
     except importlib.metadata.PackageNotFoundError:
         ejs_version = ""
     return {
-        "host_version": "1.2.2",
+        "host_version": "1.2.3",
         "yt_dlp_version": YT_DLP_VERSION,
         "ejs_available": importlib.util.find_spec("yt_dlp_ejs") is not None,
         "ejs_version": ejs_version,

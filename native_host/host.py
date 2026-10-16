@@ -26,6 +26,14 @@ install_version_info(QueueManager)
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--smoke-local-mp3":
+        from local_smoke import smoke_local_mp3
+        try:
+            print(json.dumps(smoke_local_mp3(), ensure_ascii=False))
+            return 0
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+            return 1
     if len(sys.argv) > 1 and sys.argv[1] == "--diagnostics":
         print(json.dumps(runtime_diagnostics(QueueManager._find_node()), ensure_ascii=False))
         return 0
@@ -81,13 +89,14 @@ def main() -> int:
                         message.get("mode", "video"),
                         message.get("title", ""),
                         message.get("cookies") or [],
+                        bool(message.get("use_cookies", False)),
                     )
                     response["queue"] = manager.snapshot()
                 elif action == "repair_channel":
                     response["repair"] = manager.repair_channel(
                         message.get("url", ""), message.get("cookies") or [])
                 elif action == "retry":
-                    manager.retry(message.get("task_id", ""), message.get("cookies"))
+                    manager.retry(message.get("task_id", ""), message.get("cookies"), message.get("use_cookies"))
                     response["queue"] = manager.snapshot()
                 elif action == "cancel":
                     manager.cancel(message.get("task_id", ""))

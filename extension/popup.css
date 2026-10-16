@@ -57,4 +57,7 @@ input[type="url"]:focus { border-color: #6e7781; box-shadow: 0 0 0 2px rgba(9,10
 .progress > div { height: 100%; background: #0969da; width: 0; transition: width .2s ease; }
 .task-bottom { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 7px; color: #667085; font-size: 10px; }
 .task-bottom button { padding: 4px 7px; font-size: 10px; }
+.auth-switch { display: flex; gap: 7px; align-items: center; font-size: 11px; color: #606b77; margin-top: 11px; }
+.auth-switch input { margin: 0; }
 footer { color: #8c959f; font-size: 10px; line-height: 1.4; padding: 0 2px 4px; }
+footer button { margin-top: 8px; }

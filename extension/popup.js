@@ -9,6 +9,7 @@ const queueElement = document.getElementById("queue");
 const queueCount = document.getElementById("queueCount");
 const hostState = document.getElementById("hostState");
 const hostDetails = document.getElementById("hostDetails");
+const useCookies = document.getElementById("useCookies");
 
 let detected = { kind: "unknown", normalizedUrl: "", label: "未识别" };
 let state = { connected: false, queue: [], hostInfo: {} };
@@ -172,7 +173,7 @@ function renderQueue(items) {
         const retry = document.createElement("button");
         retry.className = "ghost";
         retry.textContent = "重试";
-        retry.addEventListener("click", () => send({ type: "retry", taskId: task.id }).catch((e) => setMessage(e.message, "error")));
+        retry.addEventListener("click", () => send({ type: "retry", taskId: task.id, useCookies: useCookies.checked }).catch((e) => setMessage(e.message, "error")));
         actions.appendChild(retry);
       }
       const remove = document.createElement("button");
@@ -224,6 +225,7 @@ enqueueButton.addEventListener("click", async () => {
       kind: detected.kind,
       mode: selectedMode(),
       title: currentTitle,
+      useCookies: useCookies.checked,
     });
     const suffix = detected.kind === "channel" ? "；开始前会先整理已经下载的同频道文件。" : "。";
     setMessage(`${detected.label} 已加入队列${suffix}`, "ok");
@@ -241,7 +243,7 @@ repairButton.addEventListener("click", async () => {
   updateDetected();
   setMessage("正在读取频道页面的“专辑和单曲”并整理已下载文件；不会重新下载媒体…");
   try {
-    const response = await send({ type: "repairChannel", url: detected.normalizedUrl });
+    const response = await send({ type: "repairChannel", url: detected.normalizedUrl, useCookies: useCookies.checked });
     const repair = response.repair || {};
     const catalog = repair.catalog || {};
     const audio = repair.results?.audio || {};
@@ -258,6 +260,21 @@ repairButton.addEventListener("click", async () => {
   } finally {
     repairing = false;
     updateDetected();
+  }
+});
+
+document.getElementById("reconnectHost").addEventListener("click", async () => {
+  if ((state.queue || []).some(task => task.status === "downloading")) {
+    setMessage("请先等待当前任务结束或取消任务后，再重新连接 Host。", "error");
+    return;
+  }
+  setMessage("正在连接已安装的最新 Host…");
+  try {
+    const result = await send({ type: "reconnectHost" });
+    renderState({ ...result, hostInfo: result.host });
+    setMessage(`已连接 Host ${result.host?.version || "未知版本"}。`, "ok");
+  } catch (error) {
+    setMessage(error.message || String(error), "error");
   }
 });
 
