@@ -40,6 +40,7 @@
         </label>
       </div>
 
+      <label class="auth-switch"><input type="checkbox" id="useCookies" />使用 YouTube 登录 Cookie（仅下载需登录的内容时勾选）</label>
       <button id="enqueue" class="primary">加入下载队列</button>
       <div id="channelTools" class="channel-tools" hidden>
         <button id="repairChannel" class="ghost repair">整理这个频道已下载的文件</button>
@@ -62,7 +63,7 @@
       <div id="queue" class="queue"></div>
     </section>
 
-    <footer id="hostDetails"></footer>
+    <footer><div id="hostDetails"></div><button id="reconnectHost" class="ghost">重新连接 Host</button></footer>
   </main>
   <script src="popup.js"></script>
 </body>

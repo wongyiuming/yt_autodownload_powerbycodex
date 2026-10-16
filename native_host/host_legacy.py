@@ -88,6 +88,7 @@ class Task:
     kind: str
     mode: str
     title: str = ""
+    use_cookies: bool = False
     status: str = "queued"
     progress: float = 0.0
     speed: str = ""
@@ -229,11 +230,15 @@ class QueueManager:
         self._save()
         self.writer.send({"event": "queue", "queue": self.snapshot()})
 
-    def enqueue(self, raw_url: str, mode: str, title: str, cookies: list[dict]) -> Task:
+    def enqueue(self, raw_url: str, mode: str, title: str, cookies: list[dict], use_cookies: bool = False) -> Task:
         kind, normalized = classify_url(raw_url)
         if mode not in {"video", "audio"}:
             raise ValueError("mode 必须是 video 或 audio")
-        self._write_cookies(cookies)
+        enabled = bool(use_cookies and cookies)
+        if enabled:
+            self._write_cookies(cookies)
+        elif use_cookies:
+            HostLogger().warning("用户勾选登录 Cookie，但没有从 Chrome 获取到 Cookie；本任务按公开内容处理。")
         stamp = now_iso()
         task = Task(
             id=uuid.uuid4().hex[:12],
@@ -241,6 +246,7 @@ class QueueManager:
             kind=kind,
             mode=mode,
             title=(title or "").strip(),
+            use_cookies=enabled,
             created_at=stamp,
             updated_at=stamp,
         )

@@ -105,6 +105,13 @@ class RuntimeTests(unittest.TestCase):
             youtube_runtime.download_with_fallback({"cookiefile": "cookies.txt"}, "url")
         self.assertEqual(len(FakeYDL.attempts), 3)
 
+    def test_cookies_are_opt_in_like_yt_dlp_cli(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "youtube-cookies.txt"
+            path.write_text("# Netscape HTTP Cookie File\n")
+            self.assertNotIn("cookiefile", youtube_runtime.youtube_options(None, path))
+            self.assertEqual(youtube_runtime.youtube_options(None, path, use_cookies=True)["cookiefile"], str(path))
+
     def test_options_use_node_and_local_solver(self):
         options = youtube_runtime.youtube_options("C:/Node/node.exe", Path("/absent.txt"))
         self.assertEqual(options["js_runtimes"]["node"]["path"], "C:/Node/node.exe")

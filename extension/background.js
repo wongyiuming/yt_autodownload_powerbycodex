@@ -32,7 +32,9 @@ function connectHost() {
     return;
   }
 
-  port.onMessage.addListener((message) => {
+  const activePort = port;
+  activePort.onMessage.addListener((message) => {
+    if (port !== activePort) return;
     connected = true;
     if (message.reply_to && pending.has(message.reply_to)) {
       const { resolve, reject, timeout } = pending.get(message.reply_to);
@@ -46,7 +48,8 @@ function connectHost() {
     broadcast();
   });
 
-  port.onDisconnect.addListener(() => {
+  activePort.onDisconnect.addListener(() => {
+    if (port !== activePort) return;
     const error = chrome.runtime.lastError?.message || "Native host disconnected";
     for (const { reject, timeout } of pending.values()) {
       clearTimeout(timeout);
@@ -87,6 +90,28 @@ function rpc(action, payload = {}, timeoutMs = 30000) {
   });
 }
 
+async function reconnectHost() {
+  if (port) {
+    const oldPort = port;
+    port = null;
+    for (const { reject, timeout } of pending.values()) {
+      clearTimeout(timeout);
+      reject(new Error("Host 正在重新连接"));
+    }
+    pending.clear();
+    try { oldPort.disconnect(); } catch (_) {}
+  }
+  connected = false;
+  hostInfo = {};
+  broadcast();
+  connectHost();
+  const result = await rpc("hello", {}, 30000);
+  hostInfo = result.host || {};
+  queue = result.queue || queue;
+  broadcast();
+  return { ok: true, host: hostInfo, queue, connected: true };
+}
+
 async function youtubeCookies() {
   try {
     return await chrome.cookies.getAll({ domain: ".youtube.com" });
@@ -101,6 +126,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse({ connected, queue, hostInfo });
       return;
     }
+    if (message.type === "reconnectHost") {
+      sendResponse(await reconnectHost());
+      return;
+    }
     if (message.type === "refresh") {
       const result = await rpc("list");
       queue = result.queue || [];
@@ -109,26 +138,27 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return;
     }
     if (message.type === "enqueue") {
-      const cookies = await youtubeCookies();
+      const cookies = message.useCookies ? await youtubeCookies() : [];
       const result = await rpc("enqueue", {
         url: message.url,
         mode: message.mode,
         kind: message.kind,
         title: message.title || "",
         cookies,
+        use_cookies: Boolean(message.useCookies),
       }, 60000);
       queue = result.queue || queue;
       sendResponse(result);
       return;
     }
     if (message.type === "repairChannel") {
-      const cookies = await youtubeCookies();
+      const cookies = message.useCookies ? await youtubeCookies() : [];
       sendResponse(await rpc("repair_channel", { url: message.url, cookies }, 10 * 60 * 1000));
       return;
     }
     if (message.type === "retry") {
-      const cookies = await youtubeCookies();
-      const result = await rpc("retry", { task_id: message.taskId, cookies });
+      const cookies = message.useCookies ? await youtubeCookies() : [];
+      const result = await rpc("retry", { task_id: message.taskId, cookies, use_cookies: Boolean(message.useCookies) });
       queue = result.queue || queue;
       sendResponse(result);
       return;

@@ -81,13 +81,14 @@ def main() -> int:
                         message.get("mode", "video"),
                         message.get("title", ""),
                         message.get("cookies") or [],
+                        bool(message.get("use_cookies", False)),
                     )
                     response["queue"] = manager.snapshot()
                 elif action == "repair_channel":
                     response["repair"] = manager.repair_channel(
                         message.get("url", ""), message.get("cookies") or [])
                 elif action == "retry":
-                    manager.retry(message.get("task_id", ""), message.get("cookies"))
+                    manager.retry(message.get("task_id", ""), message.get("cookies"), message.get("use_cookies"))
                     response["queue"] = manager.snapshot()
                 elif action == "cancel":
                     manager.cancel(message.get("task_id", ""))

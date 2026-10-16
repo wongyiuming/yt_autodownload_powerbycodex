@@ -357,7 +357,7 @@ class AlbumOrganizer:
 
     def _base_options(self) -> dict:
         options = {"quiet": True, "no_warnings": False, "logger": self.log}
-        options.update(youtube_options(self.m.node_path, COOKIE_PATH))
+        options.update(youtube_options(self.m.node_path, COOKIE_PATH, use_cookies=getattr(self, "use_cookies", False)))
         return options
 
     def _mode_root(self, mode: str) -> Path:
@@ -500,11 +500,15 @@ def install_album_support(queue_manager_cls, cancelled_error_cls) -> None:
 
     def download(self, task):
         if task.kind == "channel":
-            return AlbumOrganizer(self, cancelled_error_cls).download_channel(task)
+            organizer = AlbumOrganizer(self, cancelled_error_cls)
+            organizer.use_cookies = bool(task.use_cookies)
+            return organizer.download_channel(task)
         return original_download(self, task)
 
     def repair_channel(self, raw_url, cookies):
-        return AlbumOrganizer(self, cancelled_error_cls).repair_channel(raw_url, cookies)
+        organizer = AlbumOrganizer(self, cancelled_error_cls)
+        organizer.use_cookies = bool(cookies)
+        return organizer.repair_channel(raw_url, cookies)
 
     queue_manager_cls.host_info = host_info
     queue_manager_cls._download = download
