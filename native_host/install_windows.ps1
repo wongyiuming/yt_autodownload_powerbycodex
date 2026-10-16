@@ -111,9 +111,42 @@ $HostManifest = @{
 } | ConvertTo-Json -Depth 5
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($ManifestPath, $HostManifest, $Utf8NoBom)
-$RegPath = "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.wongyiuming.yt_autodownload"
-New-Item -Path $RegPath -Force | Out-Null
-Set-Item -Path $RegPath -Value $ManifestPath
+# Chromium searches the 32-bit registry view before the 64-bit view.
+# Update and verify both, so stale legacy entries cannot shadow our new Host.
+$RegistrySubKey = "Software\Google\Chrome\NativeMessagingHosts\com.wongyiuming.yt_autodownload"
+$RegistryViews = @(
+    [Microsoft.Win32.RegistryView]::Registry32,
+    [Microsoft.Win32.RegistryView]::Registry64
+)
+foreach ($RegistryView in $RegistryViews) {
+    $Hive = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+        [Microsoft.Win32.RegistryHive]::CurrentUser, $RegistryView
+    )
+    try {
+        $Entry = $Hive.CreateSubKey($RegistrySubKey)
+        if ($null -eq $Entry) { throw "Cannot write Chrome registry: $RegistryView" }
+        try {
+            $Entry.SetValue("", $ManifestPath, [Microsoft.Win32.RegistryValueKind]::String)
+        } finally { $Entry.Dispose() }
+    } finally { $Hive.Dispose() }
+}
+foreach ($RegistryView in $RegistryViews) {
+    $Hive = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+        [Microsoft.Win32.RegistryHive]::CurrentUser, $RegistryView
+    )
+    try {
+        $Entry = $Hive.OpenSubKey($RegistrySubKey)
+        if ($null -eq $Entry) { throw "Missing Chrome Host registration in $RegistryView" }
+        try {
+            $RegisteredManifest = [string]$Entry.GetValue("")
+            if (-not [string]::Equals(
+                $RegisteredManifest, $ManifestPath, [System.StringComparison]::OrdinalIgnoreCase
+            )) {
+                throw "Chrome $RegistryView registration mismatch: $RegisteredManifest"
+            }
+        } finally { $Entry.Dispose() }
+    } finally { $Hive.Dispose() }
+}
 $RegisteredPath = (Get-Content -Path $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json).path
 if ($RegisteredPath -ne $InstalledExe -or -not (Test-Path $RegisteredPath)) {
     throw "Native Messaging registration verification failed."
@@ -127,13 +160,44 @@ $InstallStatus = @{
 } | ConvertTo-Json -Depth 4
 [System.IO.File]::WriteAllText($StatusPath, $InstallStatus, $Utf8NoBom)
 
+# An old persistent Native Messaging connection will otherwise continue to
+# use Host 1.2.0. After verifying new registration, automatically retire only
+# the previous Host processes that belong to our LocalAppData install.
+Write-Host "Retiring legacy Native Messaging processes..."
+$InstallPrefix = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\') + '\'
+$LegacyProcesses = @()
+try {
+    $RunningHosts = @(Get-CimInstance Win32_Process -Filter "Name = 'yt_autodownload_host.exe'" -ErrorAction Stop)
+} catch {
+    Write-Warning "Cannot enumerate old Host processes: $($_.Exception.Message). If Chrome still shows an old version, close Chrome fully."
+    $RunningHosts = @()
+}
+foreach ($ExistingHost in $RunningHosts) {
+    $ExistingPath = [string]$ExistingHost.ExecutablePath
+    if (-not $ExistingPath) { continue }
+    if (-not $ExistingPath.StartsWith($InstallPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+    if ([string]::Equals($ExistingPath, $InstalledExe, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+    $LegacyProcesses += $ExistingHost
+    Write-Host "Disconnecting old Host PID $($ExistingHost.ProcessId): $ExistingPath"
+    Stop-Process -Id $ExistingHost.ProcessId -Force -ErrorAction Stop
+}
+if ($LegacyProcesses.Count -gt 0) {
+    Start-Sleep -Milliseconds 350
+    foreach ($OldHost in $LegacyProcesses) {
+        if (Get-Process -Id $OldHost.ProcessId -ErrorAction SilentlyContinue) {
+            throw "Old Host PID $($OldHost.ProcessId) did not exit; close Chrome and rerun installation."
+        }
+    }
+    Write-Host "Old Host disconnected; Chrome can reconnect with the updated executable."
+}
+
 Write-Host ""
 Write-Host "SUCCESS: Installed Host $($Health.host_version) and extension $StableVersion."
 Write-Host "Stable extension directory: $ExtensionDir"
 Write-Host "Registered host executable: $InstalledExe"
 Write-Host "Diagnostics: & '$InstalledExe' --diagnostics"
 Write-Host "IMPORTANT: In chrome://extensions, load/reload the STABLE extension directory above."
-Write-Host "IMPORTANT: Click 'Reconnect Host' in the updated popup to switch from an old persistent process."
+Write-Host "Previously installed Host processes were disconnected automatically when found."
 if (-not $NoLaunch) {
     $Chrome = Get-Command "chrome.exe" -ErrorAction SilentlyContinue
     if ($Chrome) { Start-Process $Chrome.Source "chrome://extensions" }
