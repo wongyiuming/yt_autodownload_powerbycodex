@@ -2,12 +2,19 @@
 
 把原来的 Python/yt-dlp 下载脚本改造成 **Chrome 操作入口 + Windows 本机下载组件**。安装完成后，日常不需要再打开 PyCharm、VS Code 或 Codex：只在 Chrome 中打开视频、播放列表或公开频道，然后从扩展加入队列。
 
+## v0.1.8：自动激活 Native Host 更新
+
+- **安装器自动切换版本**：验证新 Host 后同时更新 Chrome 32 位/64 位注册表视图，检查注册清单路径，并只关闭本软件安装目录中的旧 Host 进程。Chrome 扩展会在连接断开后自动重连，无需手动关闭 Chrome。
+- **杜绝“已连接旧版”的假成功**：扩展会将真正连接的 Host 版本与自身清单版本比较，不匹配时显示红色错误并禁止开始下载；点击「重新连接 Host」也不能再把旧版当成成功。
+- **真实升级回归测试**：Windows CI 会运行一个模拟旧 Host 的持久连接，将旧注册项注入两个注册表视图，再验证新版安装能关闭旧进程、纠正注册项并通过 Native Messaging 握手。
+- 注意：旧版仍在下载时升级，会中断旧 Host 进程，未完成任务由队列持久化机制在新 Host 上恢复。
+
 ## v0.1.7：下载运行时与独立 yt-dlp 对齐
 
 - **公开内容默认匿名下载**，不再无条件注入 Chrome 登录 Cookie；只有在扩展勾选「使用 YouTube 登录 Cookie」时，才会附加登录状态。
 - **修复 Windows 升级失败**：为每一组 Host/Node 安装独立的哈希版本目录，不覆盖正在运行的旧 EXE，安装后校验 Host、EJS、Node 与扩展版本，任何失败都显式报错。
 - 扩展文件固定安装到 `%LOCALAPPDATA%\YTAutodownload\extension`。首次升级需在 `chrome://extensions` 中将旧的解压目录替换成该稳定目录；以后不必随 ZIP 路径迁移。
-- 安装完成后在扩展中点击「重新连接 Host」才会关闭旧 Native Messaging 端口并使用已注册的新版本；正在下载任务应先结束或取消。
+- v0.1.8 起，安装器会自动终止已安装的旧 Host 并触发 Chrome 重连，扩展会强制进行版本匹配校验。
 - Windows CI 增加：真实 EXE 经本地 HTTP 下载 WAV 并用 FFmpeg 生成 MP3、Chrome Native Messaging 帧协议通信、EXE 被锁定时重复安装。YouTube 公网测试由于 GitHub 出口可能被要求验证码，只作为诊断，不作为下载成功承诺。
 
 升级后请在 PowerShell 使用注册文件查找**当前实际运行的 EXE**（不要再直接运行旧的 `bin\yt_autodownload_host.exe`）：
@@ -176,7 +183,7 @@ Windows Action 会把 Native host 用 PyInstaller **冻结/打包**成单文件 
 
 ## 诊断
 
-此版本的 Native Host 是 1.2.3，Windows 发行版为 v0.1.7。运行以下命令无需打开 Chrome、无需 Cookie、不会下载视频：
+此版本的 Native Host 是 1.2.4，Windows 发行版为 v0.1.8。运行以下命令无需打开 Chrome、无需 Cookie、不会下载视频：
 
 ```powershell
  $manifest = Get-Content "$env:LOCALAPPDATA\YTAutodownload\com.wongyiuming.yt_autodownload.json" -Raw | ConvertFrom-Json

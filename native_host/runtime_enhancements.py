@@ -190,7 +190,7 @@ def install_version_info(queue_manager_cls) -> None:
     def host_info(self):
         info = original(self)
         info.update({
-            "version": "1.2.3",
+            "version": "1.2.4",
             **runtime_diagnostics(self.node_path),
             "album_organization": True,
             "auto_retry_count": AUTO_RETRY_COUNT,
