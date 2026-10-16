@@ -31,6 +31,11 @@ class FakeYDL:
     def download(self, urls):
         if self.failures:
             error = self.failures.pop(0)
+            if isinstance(error, tuple):
+                code, message = error
+                if message:
+                    self.options["logger"].error(message)
+                return code
             if error:
                 raise DownloadError(error)
         return 0
@@ -70,17 +75,35 @@ class RuntimeTests(unittest.TestCase):
             youtube_runtime.download_with_fallback({"cookiefile": "cookies.txt"}, "url")
         self.assertEqual(len(FakeYDL.attempts), 1)
 
-    def test_anonymous_reload_does_not_repeat(self):
-        FakeYDL.failures = ["The page needs to be reloaded."]
-        with self.assertRaises(youtube_runtime.NonRetryableYoutubeError):
-            youtube_runtime.download_with_fallback({}, "url")
-        self.assertEqual(len(FakeYDL.attempts), 1)
+    def test_anonymous_reload_uses_alternate_player_once(self):
+        FakeYDL.failures = ["The page needs to be reloaded.", None]
+        youtube_runtime.download_with_fallback({}, "url")
+        self.assertEqual(len(FakeYDL.attempts), 2)
+        self.assertEqual(
+            FakeYDL.attempts[1]["extractor_args"]["youtube"]["player_client"],
+            ["web_safari", "web_embedded"],
+        )
 
-    def test_double_reload_gives_actionable_error(self):
-        FakeYDL.failures = ["The page needs to be reloaded."] * 2
+    def test_reload_return_code_uses_recorded_error(self):
+        FakeYDL.failures = [
+            (1, "ERROR: [youtube] The page needs to be reloaded."),
+            None,
+        ]
+        youtube_runtime.download_with_fallback({"cookiefile": "cookies.txt"}, "url")
+        self.assertEqual(len(FakeYDL.attempts), 2)
+        self.assertNotIn("cookiefile", FakeYDL.attempts[1])
+
+    def test_reload_fallback_has_three_attempts_max(self):
+        FakeYDL.failures = ["The page needs to be reloaded."] * 3
         with self.assertRaises(youtube_runtime.NonRetryableYoutubeError):
             youtube_runtime.download_with_fallback({"cookiefile": "cookies.txt"}, "url")
-        self.assertEqual(len(FakeYDL.attempts), 2)
+        self.assertEqual(len(FakeYDL.attempts), 3)
+
+    def test_double_reload_gives_actionable_error(self):
+        FakeYDL.failures = ["The page needs to be reloaded."] * 3
+        with self.assertRaises(youtube_runtime.NonRetryableYoutubeError):
+            youtube_runtime.download_with_fallback({"cookiefile": "cookies.txt"}, "url")
+        self.assertEqual(len(FakeYDL.attempts), 3)
 
     def test_options_use_node_and_local_solver(self):
         options = youtube_runtime.youtube_options("C:/Node/node.exe", Path("/absent.txt"))

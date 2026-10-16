@@ -62,6 +62,12 @@ jobs:
           if (-not $health.node_compatible) { throw "Bundled Node.js must be >=22" }
           if (-not $health.yt_dlp_version.StartsWith("2026.10.10.233141")) { throw "Unexpected yt-dlp version" }
 
+      - name: Probe YouTube metadata with frozen Host (informational)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & .\\dist\\yt_autodownload_host.exe --probe-url "https://www.youtube.com/watch?v=S0pt6PEApy0"
+
       - name: Package Windows distribution
         shell: pwsh
         run: |

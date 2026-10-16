@@ -127,7 +127,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return;
     }
     if (message.type === "retry") {
-      const result = await rpc("retry", { task_id: message.taskId });
+      const cookies = await youtubeCookies();
+      const result = await rpc("retry", { task_id: message.taskId, cookies });
       queue = result.queue || queue;
       sendResponse(result);
       return;

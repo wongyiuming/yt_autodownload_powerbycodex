@@ -18,7 +18,10 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
     if getattr(queue_manager_cls, "_runtime_enhancements_installed", False):
         return
 
-    def retry(self, task_id: str) -> None:
+    def retry(self, task_id: str, cookies: list[dict] | None = None) -> None:
+        if cookies is not None:
+            # Re-request Chrome cookies on manual retry, not just on enqueue.
+            self._write_cookies(cookies)
         with self.lock:
             task = self._task(task_id)
             if task.status not in {"error", "cancelled"}:
@@ -154,6 +157,11 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
             "logger": host_legacy.HostLogger(),
         }
         options.update(youtube_options(self.node_path, host_legacy.COOKIE_PATH))
+        host_legacy.HostLogger().info(
+            f"download start task={task.id} kind={task.kind} "
+            f"cookiefile={bool(options.get('cookiefile'))} "
+            f"yt-dlp={runtime_diagnostics(self.node_path)['yt_dlp_version']}"
+        )
         if task.mode == "audio":
             options.update({
                 "format": "bestaudio/best",
@@ -181,7 +189,7 @@ def install_version_info(queue_manager_cls) -> None:
     def host_info(self):
         info = original(self)
         info.update({
-            "version": "1.2.1",
+            "version": "1.2.2",
             **runtime_diagnostics(self.node_path),
             "album_organization": True,
             "auto_retry_count": AUTO_RETRY_COUNT,
