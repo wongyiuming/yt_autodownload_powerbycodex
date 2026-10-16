@@ -2,6 +2,22 @@
 
 把原来的 Python/yt-dlp 下载脚本改造成 **Chrome 操作入口 + Windows 本机下载组件**。安装完成后，日常不需要再打开 PyCharm、VS Code 或 Codex：只在 Chrome 中打开视频、播放列表或公开频道，然后从扩展加入队列。
 
+## v0.1.7：下载运行时与独立 yt-dlp 对齐
+
+- **公开内容默认匿名下载**，不再无条件注入 Chrome 登录 Cookie；只有在扩展勾选「使用 YouTube 登录 Cookie」时，才会附加登录状态。
+- **修复 Windows 升级失败**：为每一组 Host/Node 安装独立的哈希版本目录，不覆盖正在运行的旧 EXE，安装后校验 Host、EJS、Node 与扩展版本，任何失败都显式报错。
+- 扩展文件固定安装到 `%LOCALAPPDATA%\YTAutodownload\extension`。首次升级需在 `chrome://extensions` 中将旧的解压目录替换成该稳定目录；以后不必随 ZIP 路径迁移。
+- 安装完成后在扩展中点击「重新连接 Host」才会关闭旧 Native Messaging 端口并使用已注册的新版本；正在下载任务应先结束或取消。
+- Windows CI 增加：真实 EXE 经本地 HTTP 下载 WAV 并用 FFmpeg 生成 MP3、Chrome Native Messaging 帧协议通信、EXE 被锁定时重复安装。YouTube 公网测试由于 GitHub 出口可能被要求验证码，只作为诊断，不作为下载成功承诺。
+
+升级后请在 PowerShell 使用注册文件查找**当前实际运行的 EXE**（不要再直接运行旧的 `bin\yt_autodownload_host.exe`）：
+
+```powershell
+$manifest = Get-Content "$env:LOCALAPPDATA\YTAutodownload\com.wongyiuming.yt_autodownload.json" -Raw | ConvertFrom-Json
+& $manifest.path --diagnostics
+& $manifest.path --probe-url "https://www.youtube.com/watch?v=S0pt6PEApy0"
+```
+
 ## 已实现
 
 - 自动读取当前 Chrome 标签页 URL。
@@ -113,7 +129,7 @@ UI 全部在 Chrome；下载、合并和文件整理由本机组件完成。
 4. Chrome 打开 `chrome://extensions`。
 5. 开启右上角 **开发者模式**。
 6. 第一次安装：点击 **加载已解压的扩展程序**，选择 `extension`。
-7. 升级时：如果新包解压到了新目录，请在扩展管理页重新加载/重新选择新的 `extension` 目录。
+7. 升级时：请加载/重新加载安装后固定的 `%LOCALAPPDATA%\YTAutodownload\extension` 目录，扩展内点击「重新连接 Host」，并检查版本号。
 
 扩展 ID 固定为：
 
@@ -160,17 +176,18 @@ Windows Action 会把 Native host 用 PyInstaller **冻结/打包**成单文件 
 
 ## 诊断
 
-此版本的 Native Host 是 1.2.2，Windows 发行版为 v0.1.6。运行以下命令无需打开 Chrome、无需 Cookie、不会下载视频：
+此版本的 Native Host 是 1.2.3，Windows 发行版为 v0.1.7。运行以下命令无需打开 Chrome、无需 Cookie、不会下载视频：
 
 ```powershell
-& "$env:LOCALAPPDATA\YTAutodownload\bin\yt_autodownload_host.exe" --diagnostics
+ $manifest = Get-Content "$env:LOCALAPPDATA\YTAutodownload\com.wongyiuming.yt_autodownload.json" -Raw | ConvertFrom-Json
+& $manifest.path --diagnostics
 # 进一步测试公开 YouTube 视频的提取与 JS 挑战（不会下载）：
-& "$env:LOCALAPPDATA\YTAutodownload\bin\yt_autodownload_host.exe" --probe-url "https://www.youtube.com/watch?v=S0pt6PEApy0"
+& $manifest.path --probe-url "https://www.youtube.com/watch?v=S0pt6PEApy0"
 ```
 
 输出包括 `host_version`、`yt_dlp_version`、`ejs_available`、`ejs_version`、`node_version` 和 `node_compatible`。安装包构建时会验证 EJS 已冻结打包、Node.js 版本满足至少 v22 的要求。
 
-公开内容如果遇到 YouTube 的 `The page needs to be reloaded`，程序会仅针对这一错误自动尝试一次不携带 Cookie 的访问；登录专属资源仍需要有效的浏览器 Cookie。每次从 Chrome 添加任务时如果没有获取到 Cookie，旧缓存会被清除。稳定重现的 reload 将在匿名重试失败后再尝试一次备用网页客户端，不会反复执行相同请求。重试任务时扩展也会重新获取 Chrome Cookie。每次启动会在 `host.log` 中写入 `HOST_START` 和依赖版本，方便区分旧进程与新版本。
+默认公开下载不附加 Cookie。只有在用户明确勾选登录模式时才携带 Cookie；如果遇到 YouTube 的 `The page needs to be reloaded`，程序会针对这一错误自动尝试匿名访问；登录专属资源仍需要有效的浏览器 Cookie。每次从 Chrome 添加任务时如果没有获取到 Cookie，旧缓存会被清除。稳定重现的 reload 将在匿名重试失败后再尝试一次备用网页客户端，不会反复执行相同请求。重试任务时扩展也会重新获取 Chrome Cookie。每次启动会在 `host.log` 中写入 `HOST_START` 和依赖版本，方便区分旧进程与新版本。
 
 
 ```text

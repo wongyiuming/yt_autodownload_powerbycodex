@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -61,6 +63,19 @@ jobs:
           if (-not $health.ejs_available) { throw "Frozen host is missing yt-dlp-ejs" }
           if (-not $health.node_compatible) { throw "Bundled Node.js must be >=22" }
           if (-not $health.yt_dlp_version.StartsWith("2026.10.10.233141")) { throw "Unexpected yt-dlp version" }
+
+      - name: Test frozen MP3 pipeline on localhost
+        shell: pwsh
+        run: |
+          $result = (& .\dist\yt_autodownload_host.exe --smoke-local-mp3 | ConvertFrom-Json)
+          if ($LASTEXITCODE -ne 0 -or -not $result.ok -or $result.mp3_bytes -lt 100) {
+            throw "Real yt-dlp + FFmpeg MP3 pipeline failed"
+          }
+
+      - name: Test Windows installer and Native Messaging handshake
+        shell: pwsh
+        run: |
+          & .\tools\smoke_windows_install.ps1
 
       - name: Probe YouTube metadata with frozen Host (informational)
         continue-on-error: true
