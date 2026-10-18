@@ -107,7 +107,14 @@ Write-Host "Verified Host $($Health.host_version) | yt-dlp $($Health.yt_dlp_vers
 
 # Block new workers BEFORE switching registration. A reconnect during cleanup
 # may start the new EXE, but it cannot restore or execute persisted tasks yet.
-[System.IO.File]::WriteAllText($UpgradeMarker, "Installation in progress; rerun installer if interrupted.")
+if (-not (Test-Path -LiteralPath $UpgradeMarker)) {
+    $Barrier = [System.IO.File]::Open($UpgradeMarker, 'CreateNew', 'Write', 'None')
+    try {
+        $Bytes = [System.Text.Encoding]::UTF8.GetBytes("Installation in progress; rerun installer if interrupted.")
+        $Barrier.Write($Bytes, 0, $Bytes.Length)
+        $Barrier.Flush($true)
+    } finally { $Barrier.Dispose() }
+}
 
 Write-Host "[4/5] Updating stable extension files..."
 Copy-Item -Path (Join-Path $Root "extension\*") -Destination $ExtensionDir -Force -Recurse
@@ -165,7 +172,8 @@ if ($RegisteredPath -ne $InstalledExe -or -not (Test-Path $RegisteredPath)) {
     throw "Native Messaging registration verification failed."
 }
 # Retire all already-running installed Hosts, including same-version reinstalls.
-# New instances started after this snapshot are held behind UpgradeMarker.
+# New instances are held behind UpgradeMarker; cleanup drains fresh descendant
+# snapshots until all producers have exited and a final scan is clean.
 # If any cleanup or verification fails, leave the marker in place.
 Stop-InstalledHostTrees -InstallDir $InstallDir
 

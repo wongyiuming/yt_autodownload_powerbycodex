@@ -1,9 +1,33 @@
 # Loaded by the installer and exercised directly by Windows regression tests.
-function Get-InstalledHostTree {
-    param([string]$InstallDir)
+function Get-HostProcessSnapshot {
     # Enumeration errors must abort the upgrade, never silently skip cleanup.
-    $Snapshot = @(Get-CimInstance Win32_Process -ErrorAction Stop)
-    $Prefix = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\') + '\'
+    return @(Get-CimInstance Win32_Process -ErrorAction Stop)
+}
+
+function Get-HostBootTicks {
+    return (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().Ticks
+}
+
+function ConvertTo-HostProcessRecord {
+    param($Process)
+    $Ticks = if ($Process.CreationTicks) { [long]$Process.CreationTicks } else {
+        if (-not $Process.CreationDate) { throw 'Missing process creation time.' }
+        $Process.CreationDate.ToUniversalTime().Ticks
+    }
+    return @{ ProcessId = [int]$Process.ProcessId; CreationTicks = $Ticks
+        ParentProcessId = [int]$Process.ParentProcessId; ExitTicks = [long]$Process.ExitTicks
+        Uncertain = [bool]$Process.Uncertain }
+}
+
+function Get-HostProcessKey {
+    param($Process)
+    return "$($Process.ProcessId):$($Process.CreationTicks)"
+}
+
+function Get-InstalledHostTree {
+    param([string]$InstallDir, [array]$Snapshot = (Get-HostProcessSnapshot))
+    $Separator = [System.IO.Path]::DirectorySeparatorChar
+    $Prefix = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd($Separator) + $Separator
     $Known = @{}
     $Roots = @()
     foreach ($Process in $Snapshot) {
@@ -31,29 +55,25 @@ function Get-InstalledHostTree {
     return @{ Roots = $Roots; Members = @($Known.Values) }
 }
 
-function Test-SameProcess {
-    param($Process)
-    $Current = Get-CimInstance Win32_Process -Filter "ProcessId = $($Process.ProcessId)" -ErrorAction Stop
-    # Do not target a recycled PID from the original snapshot.
-    $ExpectedTicks = if ($Process.CreationTicks) { [long]$Process.CreationTicks } else {
-        $Process.CreationDate.ToUniversalTime().Ticks
+function Open-HostCleanupProcess {
+    param($Record)
+    if (-not ('HostCleanupProcess' -as [type])) {
+        Add-Type -Path (Join-Path $PSScriptRoot 'process_identity_windows.cs')
     }
-    return ($null -ne $Current -and $Current.CreationDate.ToUniversalTime().Ticks -eq $ExpectedTicks)
+    return [HostCleanupProcess]::Open($Record.ProcessId, $Record.CreationTicks)
 }
 
 function Save-HostCleanupJournal {
-    param([string]$Path, [array]$Members)
-    $Records = @($Members | ForEach-Object {
-        $Ticks = if ($_.CreationTicks) { [long]$_.CreationTicks } else { $_.CreationDate.ToUniversalTime().Ticks }
-        @{ ProcessId = [int]$_.ProcessId; CreationTicks = $Ticks }
-    })
-    # Commit the complete identity snapshot BEFORE terminating any parent.
-    # A rerun can then find external orphans even after an installer crash.
+    param([string]$Path, [array]$Members, [long]$StartedTicks = 0)
+    $Records = @($Members | ForEach-Object { ConvertTo-HostProcessRecord $_ })
+    $Json = if ($StartedTicks) {
+        ConvertTo-Json -InputObject @{ Version = 2; StartedTicks = $StartedTicks; Records = $Records } -Depth 6
+    } else { ConvertTo-Json -InputObject $Records -Depth 6 } # Legacy journal test helper.
     $Temp = $Path + '.tmp'
-    [System.IO.File]::WriteAllText($Temp, (ConvertTo-Json -InputObject $Records))
+    $Bytes = [System.Text.Encoding]::UTF8.GetBytes($Json)
+    $Stream = [System.IO.File]::Open($Temp, 'Create', 'Write', 'None')
+    try { $Stream.Write($Bytes, 0, $Bytes.Length); $Stream.Flush($true) } finally { $Stream.Dispose() }
     if (Test-Path -LiteralPath $Path) {
-        # PowerShell coerces $null to an empty string for this .NET overload;
-        # NullString preserves the null backup-path argument on PS 5.1 and 7.
         [System.IO.File]::Replace($Temp, $Path, [System.Management.Automation.Language.NullString]::Value)
     } else {
         [System.IO.File]::Move($Temp, $Path)
@@ -61,43 +81,141 @@ function Save-HostCleanupJournal {
 }
 
 function Stop-InstalledHostTrees {
-    param([string]$InstallDir)
-    $Tree = Get-InstalledHostTree $InstallDir
+    param([string]$InstallDir, [int]$TimeoutSeconds = 15)
     $Journal = Join-Path $InstallDir 'upgrade-processes.json'
+    $Marker = Join-Path $InstallDir 'upgrade-in-progress'
+    if (-not (Test-Path -LiteralPath $Marker)) { throw 'Host cleanup requires the upgrade barrier.' }
+    # Preserve the beginning of an interrupted attempt, even if it failed before
+    # the first journal commit. Never reset this horizon on a reinstall.
+    $StartedTicks = (Get-Item -LiteralPath $Marker).LastWriteTimeUtc.Ticks
+    $Known = @{}
+    $Handles = @{}
     if (Test-Path -LiteralPath $Journal) {
-        # PS 5.1 emits a JSON array as a single pipeline object. Assign first
-        # and iterate explicitly so [] and nonempty arrays work in both shells.
-        $Previous = Get-Content -LiteralPath $Journal -Raw | ConvertFrom-Json
+        $JournalText = Get-Content -LiteralPath $Journal -Raw
+        $Previous = $JournalText | ConvertFrom-Json
+        if ($JournalText.TrimStart().StartsWith('{')) {
+            if (-not $Previous.Version -or $null -eq $Previous.Records) { throw 'Invalid Host cleanup journal.' }
+            if ($Previous.Version -ne 2 -or -not $Previous.StartedTicks) { throw 'Invalid Host cleanup journal.' }
+            $StartedTicks = [Math]::Min($StartedTicks, [long]$Previous.StartedTicks)
+            $Previous = $Previous.Records
+        } elseif (-not $JournalText.TrimStart().StartsWith('[')) { throw 'Invalid Host cleanup journal.' }
         foreach ($Record in $Previous) {
             if (-not $Record.ProcessId -or -not $Record.CreationTicks) { throw 'Invalid Host cleanup journal.' }
-            $Tree.Members = @($Tree.Members) + @($Record)
+            $Entry = ConvertTo-HostProcessRecord $Record
+            $Known[(Get-HostProcessKey $Entry)] = $Entry
         }
     }
-    Save-HostCleanupJournal -Path $Journal -Members $Tree.Members
-    # taskkill /T includes descendants, including PyInstaller's child and
-    # FFmpeg/Node processes whose executable paths lie outside InstallDir.
-    foreach ($Process in $Tree.Roots) {
-        if (Test-SameProcess $Process) {
-            Write-Host "Retiring Host process tree PID $($Process.ProcessId)"
-            & "$env:SystemRoot\System32\taskkill.exe" /PID $Process.ProcessId /T /F | Out-Host
-        }
+    # A reboot is a provable boundary: no process from the interrupted attempt
+    # can still be alive. Do not mistake new system processes for old orphans.
+    $BootTicks = Get-HostBootTicks
+    if ($StartedTicks -lt $BootTicks) {
+        $Known = @{}
+        $StartedTicks = [DateTime]::UtcNow.Ticks
     }
-    # Keep the pre-kill snapshot: if a root exits on its own before taskkill,
-    # /T cannot discover its orphaned descendants. Retire those explicitly.
-    foreach ($Process in $Tree.Members) {
-        if (Test-SameProcess $Process) {
-            & "$env:SystemRoot\System32\taskkill.exe" /PID $Process.ProcessId /T /F | Out-Host
-        }
+    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    try {
+        do {
+            # Refresh death times BEFORE taking a fresh system-wide snapshot.
+            # Keep dead ancestors: a child can be born after the previous scan,
+            # survive its parent, and only become visible on this scan.
+            $AliveBeforeScan = 0
+            foreach ($Key in @($Known.Keys)) {
+                if (-not $Handles.ContainsKey($Key) -and -not $Known[$Key].ExitTicks) {
+                    $Handle = Open-HostCleanupProcess $Known[$Key]
+                    if ($null -ne $Handle) { $Handles[$Key] = $Handle }
+                }
+                if ($Handles.ContainsKey($Key)) {
+                    $Known[$Key].ExitTicks = $Handles[$Key].ExitTicks
+                    if (-not $Known[$Key].ExitTicks) { $AliveBeforeScan++ }
+                }
+            }
+            $Snapshot = @(Get-HostProcessSnapshot)
+            $Tree = Get-InstalledHostTree -InstallDir $InstallDir -Snapshot $Snapshot
+            $Added = 0
+            # Discover descendants below using pinned parent lifetimes, rather
+            # than trusting ParentProcessId alone in a non-atomic CIM snapshot.
+            foreach ($Process in $Tree.Roots) {
+                $Record = ConvertTo-HostProcessRecord $Process
+                $Key = Get-HostProcessKey $Record
+                if (-not $Known.ContainsKey($Key)) { $Known[$Key] = $Record; $Added++ }
+            }
+            # Pin each identified producer before terminating ANY of them.
+            # Retained handles also supply exact exit times after spontaneous exit.
+            foreach ($Key in @($Known.Keys)) {
+                if (-not $Handles.ContainsKey($Key) -and -not $Known[$Key].ExitTicks) {
+                    $Handle = Open-HostCleanupProcess $Known[$Key]
+                    if ($null -ne $Handle) { $Handles[$Key] = $Handle }
+                }
+            }
+            do {
+                $Expanded = $false
+                foreach ($Process in $Snapshot) {
+                    if (-not $Process.CreationDate -or [int]$Process.ProcessId -eq 0) { continue }
+                    $Record = ConvertTo-HostProcessRecord $Process
+                    $Key = Get-HostProcessKey $Record
+                    if ($Known.ContainsKey($Key)) { continue }
+                    $Parents = @($Known.Values | Where-Object {
+                        $_.ProcessId -eq $Record.ParentProcessId -and $_.CreationTicks -le $Record.CreationTicks
+                    } | Sort-Object CreationTicks -Descending)
+                    if ($Parents.Count -eq 0) { continue }
+                    $Parent = $Parents[0]
+                    $ParentKey = Get-HostProcessKey $Parent
+                    if ($Handles.ContainsKey($ParentKey)) { $Parent.ExitTicks = $Handles[$ParentKey].ExitTicks }
+                    # A PID may be reused after the original parent dies. A child
+                    # born outside its lifetime is never attributed to that parent.
+                    if ($Parent.ExitTicks -and $Record.CreationTicks -gt $Parent.ExitTicks) { continue }
+                    $Record.Uncertain = $Parent.Uncertain -or (
+                        -not $Handles.ContainsKey($ParentKey) -and -not $Parent.ExitTicks)
+                    $Known[$Key] = $Record
+                    $Handle = Open-HostCleanupProcess $Record
+                    if ($null -ne $Handle) { $Handles[$Key] = $Handle }
+                    $Expanded = $true
+                    $Added++
+                }
+            } while ($Expanded)
+
+            # A short-lived intermediate can spawn and disappear entirely between
+            # scans. A newly born orphan with no provable parent could be its child.
+            # Do not kill unrelated processes on suspicion, and do not declare
+            # success while that uncertainty remains. Persist it for recovery.
+            $ByPid = @{}
+            foreach ($Process in $Snapshot) { $ByPid[[int]$Process.ProcessId] = $Process }
+            foreach ($Process in $Snapshot) {
+                if (-not $Process.CreationDate -or [int]$Process.ProcessId -eq 0) { continue }
+                $Record = ConvertTo-HostProcessRecord $Process
+                $Key = Get-HostProcessKey $Record
+                if ($Known.ContainsKey($Key) -or $Record.CreationTicks -lt $StartedTicks) { continue }
+                $Parent = $ByPid[$Record.ParentProcessId]
+                if ($null -ne $Parent -and $Parent.CreationDate -and
+                    $Parent.CreationDate -le $Process.CreationDate) { continue }
+                $Record.Uncertain = $true
+                $Known[$Key] = $Record
+                $Handle = Open-HostCleanupProcess $Record
+                if ($null -ne $Handle) { $Handles[$Key] = $Handle }
+                $Added++
+            }
+            # Commit every newly discovered identity BEFORE any termination. Keep
+            # the full history until a scan begun with ALL producers dead is clean.
+            Save-HostCleanupJournal -Path $Journal -Members @($Known.Values) -StartedTicks $StartedTicks
+            $Alive = @()
+            foreach ($Key in @($Handles.Keys)) {
+                $Known[$Key].ExitTicks = $Handles[$Key].ExitTicks
+                if (-not $Known[$Key].ExitTicks) {
+                    $Alive += $Known[$Key]
+                    if (-not $Known[$Key].Uncertain) { $Handles[$Key].Stop() }
+                }
+            }
+            if ($Alive.Count -eq 0 -and $AliveBeforeScan -eq 0 -and $Added -eq 0) {
+                Remove-Item -LiteralPath $Journal -ErrorAction Stop
+                Write-Host "HOST_PROCESS_TREE_CLEANUP_OK ($($Known.Count) identities, final descendant scan verified)"
+                return
+            }
+            if ((Get-Date) -ge $Deadline) {
+                throw "Host cleanup incomplete; upgrade remains blocked. Live or uncertain PIDs: $($Alive.ProcessId -join ', '). Rerun installer after they exit; restart Windows if ancestry cannot be established."
+            }
+            Start-Sleep -Milliseconds 100
+        } while ($true)
+    } finally {
+        foreach ($Handle in $Handles.Values) { $Handle.Dispose() }
     }
-    $Deadline = (Get-Date).AddSeconds(15)
-    do {
-        $Alive = @($Tree.Members | Where-Object { Test-SameProcess $_ })
-        if ($Alive.Count -eq 0) { break }
-        Start-Sleep -Milliseconds 100
-    } while ((Get-Date) -lt $Deadline)
-    if ($Alive.Count -gt 0) {
-        throw "Host tree cleanup failed; upgrade remains blocked. Surviving PIDs: $($Alive.ProcessId -join ', ')"
-    }
-    Remove-Item -LiteralPath $Journal -ErrorAction Stop
-    Write-Host "HOST_PROCESS_TREE_CLEANUP_OK ($($Tree.Members.Count) processes verified exited)"
 }
