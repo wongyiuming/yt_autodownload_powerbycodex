@@ -55,7 +55,7 @@ function Release-FFmpeg {
         (Test-Path (Join-Path $Dir 'writing.wav')) -and
         (Get-Item (Join-Path $Dir 'writing.wav')).Length -gt 4096 -and
         -not (Get-Process -Id ([int](Get-Content (Join-Path $Dir 'worker.pid'))) -ErrorAction SilentlyContinue)
-    } 'Worker did not leave a writing FFmpeg orphan.'
+    } ('Worker did not leave a writing FFmpeg orphan in ' + $Dir)
 }
 function Assert-Retired {
     param([string]$Dir)
@@ -168,6 +168,13 @@ try {
     if ($Unrelated.HasExited) { throw 'PID reuse killed an unrelated process.' }
     Write-Host 'STALE_PID_IDENTITY_REAL_PROCESS_OK'
     Write-Host "WINDOWS_CLEANUP_RACES_OK PS=$($PSVersionTable.PSVersion)"
+} catch {
+    Get-ChildItem $Temp -Recurse -File | Where-Object { $_.Extension -in @('.pid', '.log', '.wav') } |
+        ForEach-Object {
+            Write-Host ("FIXTURE_DIAGNOSTIC " + $_.FullName + " bytes=" + $_.Length)
+            if ($_.Extension -in @('.pid', '.log')) { Get-Content $_.FullName | Select-Object -First 20 | Out-Host }
+        }
+    throw
 } finally {
     # Test teardown only: every ID comes from a fixture we explicitly created.
     foreach ($PidFile in @(Get-ChildItem $Temp -Filter '*.pid' -Recurse)) {

@@ -179,7 +179,13 @@ function Stop-InstalledHostTrees {
             # Do not kill unrelated processes on suspicion, and do not declare
             # success while that uncertainty remains. Persist it for recovery.
             $ByPid = @{}
-            foreach ($Process in $Snapshot) { $ByPid[[int]$Process.ProcessId] = $Process }
+            $CurrentKeys = @{}
+            foreach ($Process in $Snapshot) {
+                $ByPid[[int]$Process.ProcessId] = $Process
+                if ($Process.CreationDate -and [int]$Process.ProcessId -ne 0) {
+                    $CurrentKeys[(Get-HostProcessKey (ConvertTo-HostProcessRecord $Process))] = $true
+                }
+            }
             foreach ($Process in $Snapshot) {
                 if (-not $Process.CreationDate -or [int]$Process.ProcessId -eq 0) { continue }
                 $Record = ConvertTo-HostProcessRecord $Process
@@ -205,13 +211,18 @@ function Stop-InstalledHostTrees {
                     if (-not $Known[$Key].Uncertain) { $Handles[$Key].Stop() }
                 }
             }
-            if ($Alive.Count -eq 0 -and $AliveBeforeScan -eq 0 -and $Added -eq 0) {
+            # A matching live snapshot with no acquired handle is NOT evidence
+            # of exit (for example a timestamp/provider mismatch). Retry or block.
+            $Unverified = @($Known.Keys | Where-Object {
+                $CurrentKeys.ContainsKey($_) -and -not $Handles.ContainsKey($_) -and -not $Known[$_].ExitTicks
+            })
+            if ($Alive.Count -eq 0 -and $Unverified.Count -eq 0 -and $AliveBeforeScan -eq 0 -and $Added -eq 0) {
                 Remove-Item -LiteralPath $Journal -ErrorAction Stop
                 Write-Host "HOST_PROCESS_TREE_CLEANUP_OK ($($Known.Count) identities, final descendant scan verified)"
                 return
             }
             if ((Get-Date) -ge $Deadline) {
-                throw "Host cleanup incomplete; upgrade remains blocked. Live or uncertain PIDs: $($Alive.ProcessId -join ', '). Rerun installer after they exit; restart Windows if ancestry cannot be established."
+                throw "Host cleanup incomplete; upgrade remains blocked. Live or uncertain PIDs: $($Alive.ProcessId -join ', '); unverified identities: $($Unverified -join ', '). Rerun installer after they exit; restart Windows if ancestry cannot be established."
             }
             Start-Sleep -Milliseconds 100
         } while ($true)

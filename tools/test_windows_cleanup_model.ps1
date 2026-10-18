@@ -107,6 +107,21 @@ try {
     }
     Write-Host 'MODEL_UNOBSERVED_INTERMEDIATE_BLOCKED_OK'
 
+    # A provider/precision mismatch must never turn a visible live Host into
+    # "already exited" merely because the handle identity check returned null.
+    $UnverifiedDir = Reset-Model 'unverified-root'
+    $Root = New-Model 300 ($Epoch + 1000000) 1 'yt_autodownload_host.exe' (Join-Path $UnverifiedDir 'yt_autodownload_host.exe')
+    $script:Snapshots = @{ 0 = @($Baseline, $Root) }
+    $Blocked = $false
+    try { Stop-InstalledHostTrees -InstallDir $UnverifiedDir -TimeoutSeconds 0 } catch {
+        if ($_.Exception.Message -notmatch 'upgrade remains blocked') { throw }
+        $Blocked = $true
+    }
+    if (-not $Blocked -or -not (Test-Path (Join-Path $UnverifiedDir 'upgrade-processes.json'))) {
+        throw 'Unverified live identity was mistaken for process exit.'
+    }
+    Write-Host 'MODEL_UNVERIFIED_LIVE_IDENTITY_BLOCKED_OK'
+
     # Reboot recovery discards pre-boot identities and resets the orphan horizon.
     & {
         function Get-HostBootTicks { return $Epoch + 60000000 }
