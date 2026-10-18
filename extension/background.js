@@ -90,7 +90,9 @@ function connectHost() {
 function rpc(action, payload = {}, timeoutMs = 30000) {
   connectHost();
   if (!port) return Promise.reject(new Error("本机下载组件未连接"));
-  if (!["hello", "list"].includes(action) && !compatible) {
+  // Cancellation is part of the legacy protocol and must remain available
+  // during upgrades. Keep all operations that can start work gated.
+  if (!["hello", "list", "cancel"].includes(action) && !compatible) {
     return Promise.reject(new Error(hostVersionError(hostInfo)));
   }
   const id = `r${Date.now()}_${seq++}`;

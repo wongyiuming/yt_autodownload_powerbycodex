@@ -12,6 +12,15 @@ $ManifestPath = Join-Path $InstallDir "com.wongyiuming.yt_autodownload.json"
 $StatusPath = Join-Path $InstallDir "install-status.json"
 
 New-Item -ItemType Directory -Force -Path $VersionsDir, $ExtensionDir | Out-Null
+. (Join-Path $PSScriptRoot "process_cleanup_windows.ps1")
+$UpgradeMarker = Join-Path $InstallDir "upgrade-in-progress"
+# Serialize installers. The marker survives installer crashes/cleanup failures;
+# the file handle only serializes installers and is always released.
+$InstallerLock = [System.IO.File]::Open(
+    (Join-Path $InstallDir "install.lock"), [System.IO.FileMode]::OpenOrCreate,
+    [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None
+)
+try {
 
 # Always prefer the prebuilt binary from the official Release ZIP.
 $SourceExe = @(
@@ -96,6 +105,10 @@ if (-not $Health.ejs_available) { throw "Installed native host has no EJS solver
 if (-not $Health.node_compatible) { throw "Node >=22 not found beside the installed host." }
 Write-Host "Verified Host $($Health.host_version) | yt-dlp $($Health.yt_dlp_version) | Node $($Health.node_version)"
 
+# Block new workers BEFORE switching registration. A reconnect during cleanup
+# may start the new EXE, but it cannot restore or execute persisted tasks yet.
+[System.IO.File]::WriteAllText($UpgradeMarker, "Installation in progress; rerun installer if interrupted.")
+
 Write-Host "[4/5] Updating stable extension files..."
 Copy-Item -Path (Join-Path $Root "extension\*") -Destination $ExtensionDir -Force -Recurse
 $StableVersion = (Get-Content -Path (Join-Path $ExtensionDir "manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json).version
@@ -151,6 +164,11 @@ $RegisteredPath = (Get-Content -Path $ManifestPath -Raw -Encoding UTF8 | Convert
 if ($RegisteredPath -ne $InstalledExe -or -not (Test-Path $RegisteredPath)) {
     throw "Native Messaging registration verification failed."
 }
+# Retire all already-running installed Hosts, including same-version reinstalls.
+# New instances started after this snapshot are held behind UpgradeMarker.
+# If any cleanup or verification fails, leave the marker in place.
+Stop-InstalledHostTrees -InstallDir $InstallDir
+
 $InstallStatus = @{
     version = $Health.host_version
     exe = $InstalledExe
@@ -159,43 +177,8 @@ $InstallStatus = @{
     installed_at = (Get-Date).ToString("o")
 } | ConvertTo-Json -Depth 4
 [System.IO.File]::WriteAllText($StatusPath, $InstallStatus, $Utf8NoBom)
-
-# An old persistent Native Messaging connection will otherwise continue to
-# use Host 1.2.0. After verifying new registration, automatically retire only
-# the previous Host processes that belong to our LocalAppData install.
-Write-Host "Retiring legacy Native Messaging processes..."
-$InstallPrefix = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\') + '\'
-$LegacyProcesses = @()
-try {
-    $RunningHosts = @(Get-CimInstance Win32_Process -Filter "Name = 'yt_autodownload_host.exe'" -ErrorAction Stop)
-} catch {
-    Write-Warning "Cannot enumerate old Host processes: $($_.Exception.Message). If Chrome still shows an old version, close Chrome fully."
-    $RunningHosts = @()
-}
-foreach ($ExistingHost in $RunningHosts) {
-    $ExistingPath = [string]$ExistingHost.ExecutablePath
-    if (-not $ExistingPath) { continue }
-    if (-not $ExistingPath.StartsWith($InstallPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
-    if ([string]::Equals($ExistingPath, $InstalledExe, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
-    $LegacyProcesses += $ExistingHost
-    Write-Host "Disconnecting old Host PID $($ExistingHost.ProcessId): $ExistingPath"
-    try {
-        Stop-Process -Id $ExistingHost.ProcessId -Force -ErrorAction Stop
-    } catch {
-        # A one-file PyInstaller Host can have parent/child processes that
-        # exit together. Do not fail if a sibling was already terminated.
-        if (Get-Process -Id $ExistingHost.ProcessId -ErrorAction SilentlyContinue) { throw }
-    }
-}
-if ($LegacyProcesses.Count -gt 0) {
-    Start-Sleep -Milliseconds 650
-    foreach ($OldHost in $LegacyProcesses) {
-        if (Get-Process -Id $OldHost.ProcessId -ErrorAction SilentlyContinue) {
-            throw "Old Host PID $($OldHost.ProcessId) did not exit; close Chrome and rerun installation."
-        }
-    }
-    Write-Host "Old Host disconnected; Chrome can reconnect with the updated executable."
-}
+Remove-Item -LiteralPath $UpgradeMarker -ErrorAction Stop
+Write-Host "Old Host trees exited; updated Host may now resume the queue."
 
 Write-Host ""
 Write-Host "SUCCESS: Installed Host $($Health.host_version) and extension $StableVersion."
@@ -207,4 +190,8 @@ Write-Host "Previously installed Host processes were disconnected automatically 
 if (-not $NoLaunch) {
     $Chrome = Get-Command "chrome.exe" -ErrorAction SilentlyContinue
     if ($Chrome) { Start-Process $Chrome.Source "chrome://extensions" }
+}
+
+} finally {
+    $InstallerLock.Dispose()
 }

@@ -78,6 +78,11 @@ jobs:
         run: |
           & .\tools\smoke_windows_install.ps1
 
+      - name: Regress interrupted upgrade and real FFmpeg process-tree cleanup
+        shell: pwsh
+        run: |
+          & .\tools\test_windows_upgrade.ps1
+
       - name: Probe YouTube metadata with frozen Host (informational)
         continue-on-error: true
         shell: pwsh
