@@ -56,6 +56,24 @@ try {
     }
     if (-not $Failed -or -not (Test-Path $Marker)) { throw 'Failed upgrade did not retain barrier.' }
     Write-Host 'UPGRADE_CLEANUP_FAILURE_BLOCKED_OK'
+    # A second interrupted installation must preserve the original observation
+    # horizon. Rewriting the marker would hide children born during attempt one.
+    $OriginalBarrierTicks = (Get-Item -LiteralPath $Marker).LastWriteTimeUtc.Ticks
+    $FailedAgain = $false
+    try {
+        & {
+            function Get-CimInstance { throw 'Injected repeated enumeration failure' }
+            & $Installer -NoLaunch
+        }
+    } catch {
+        if ($_.Exception.Message -notmatch 'Injected repeated enumeration failure') { throw }
+        $FailedAgain = $true
+    }
+    if (-not $FailedAgain -or -not (Test-Path $Marker) -or
+        (Get-Item -LiteralPath $Marker).LastWriteTimeUtc.Ticks -ne $OriginalBarrierTicks) {
+        throw 'Repeated interrupted installation reset the barrier horizon.'
+    }
+    Write-Host 'REPEATED_INTERRUPTED_INSTALL_PRESERVES_BARRIER_OK'
 
     # Simulate Chrome reconnecting after a failed/interrupted installer. The
     # real frozen Host must not emit hello, restore state, or start its worker.

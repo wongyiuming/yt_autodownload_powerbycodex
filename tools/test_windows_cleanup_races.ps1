@@ -101,7 +101,7 @@ try {
         Write-Host "REPEATED_CLEANUP_OK node=$UseNode"
     }
 
-    # Kill the installer at the durable boundary, then recover late descendants
+    # Inject interruption at the durable boundary, then recover late descendants
     # from its v2 journal with the original session horizon preserved.
     $Dir = Join-Path $Temp 'interrupted'
     New-Barrier $Dir
