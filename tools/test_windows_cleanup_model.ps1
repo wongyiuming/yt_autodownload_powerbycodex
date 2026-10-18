@@ -122,6 +122,36 @@ try {
     }
     Write-Host 'MODEL_UNVERIFIED_LIVE_IDENTITY_BLOCKED_OK'
 
+    # The barrier exists as soon as CreateNew succeeds. A child born while the
+    # marker contents are still being written must not fall before the horizon.
+    $WriteWindowDir = Reset-Model 'marker-write-window'
+    $MarkerPath = Join-Path $WriteWindowDir 'upgrade-in-progress'
+    $CreatedTicks = $Epoch + 1000000
+    $Orphan = New-Model 400 ($CreatedTicks + 10000000) 401
+    Add-ModelHandle $Orphan
+    $script:Snapshots = @{ 0 = @($Orphan) }
+    $Blocked = $false
+    try {
+        & {
+            # Model NTFS's distinct creation/last-write timestamps. Unix scratch
+            # filesystems may expose only one timestamp through FileInfo.
+            function Get-Item {
+                param($LiteralPath)
+                if ($LiteralPath -ne $MarkerPath) { throw 'Unexpected model file access.' }
+                return [pscustomobject]@{
+                    CreationTimeUtc = [DateTime]::new($CreatedTicks, [DateTimeKind]::Utc)
+                    LastWriteTimeUtc = [DateTime]::new($CreatedTicks + 20000000, [DateTimeKind]::Utc)
+                }
+            }
+            Stop-InstalledHostTrees -InstallDir $WriteWindowDir -TimeoutSeconds 0
+        }
+    } catch {
+        if ($_.Exception.Message -notmatch 'upgrade remains blocked') { throw }
+        $Blocked = $true
+    }
+    if (-not $Blocked) { throw 'A child born during the marker write escaped the observation horizon.' }
+    Write-Host 'MODEL_MARKER_CREATE_WRITE_WINDOW_BLOCKED_OK'
+
     # Reboot recovery discards pre-boot identities and resets the orphan horizon.
     & {
         function Get-HostBootTicks { return $Epoch + 60000000 }

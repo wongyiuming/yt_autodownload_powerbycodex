@@ -87,7 +87,9 @@ function Stop-InstalledHostTrees {
     if (-not (Test-Path -LiteralPath $Marker)) { throw 'Host cleanup requires the upgrade barrier.' }
     # Preserve the beginning of an interrupted attempt, even if it failed before
     # the first journal commit. Never reset this horizon on a reinstall.
-    $StartedTicks = (Get-Item -LiteralPath $Marker).LastWriteTimeUtc.Ticks
+    $MarkerInfo = Get-Item -LiteralPath $Marker
+    # Cover children created between CreateNew and the final marker write/flush.
+    $StartedTicks = [Math]::Min($MarkerInfo.CreationTimeUtc.Ticks, $MarkerInfo.LastWriteTimeUtc.Ticks)
     $Known = @{}
     $Handles = @{}
     if (Test-Path -LiteralPath $Journal) {
