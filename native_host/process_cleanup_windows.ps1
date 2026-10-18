@@ -52,7 +52,9 @@ function Save-HostCleanupJournal {
     $Temp = $Path + '.tmp'
     [System.IO.File]::WriteAllText($Temp, (ConvertTo-Json -InputObject $Records))
     if (Test-Path -LiteralPath $Path) {
-        [System.IO.File]::Replace($Temp, $Path, $null)
+        # PowerShell coerces $null to an empty string for this .NET overload;
+        # NullString preserves the null backup-path argument on PS 5.1 and 7.
+        [System.IO.File]::Replace($Temp, $Path, [System.Management.Automation.Language.NullString]::Value)
     } else {
         [System.IO.File]::Move($Temp, $Path)
     }
