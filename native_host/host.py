@@ -12,9 +12,10 @@ from pathlib import Path
 from album_support import install_album_support
 from archive_location import install_archive_location
 from channel_enhancements import install_channel_enhancements
-from host_legacy import CancelledError, HostLogger, NativeWriter, QueueManager, read_message
+from host_legacy import APP_DIR, CancelledError, HostLogger, NativeWriter, QueueManager, read_message
 from runtime_enhancements import install_runtime_enhancements, install_version_info
 from youtube_runtime import runtime_diagnostics, extract_with_fallback, youtube_options
+from upgrade_guard import wait_for_upgrade
 
 # Base downloader/retry first; channel album logic wraps it afterwards.
 install_runtime_enhancements(QueueManager, CancelledError)
@@ -65,6 +66,9 @@ def main() -> int:
                 **runtime_diagnostics(node_path),
             }, ensure_ascii=False), file=sys.stderr)
             return 1
+    # Must precede QueueManager construction: _load restores interrupted tasks
+    # as queued and its constructor immediately starts a download worker.
+    wait_for_upgrade(APP_DIR)
     HostLogger().info(
         "HOST_START " +
         json.dumps(runtime_diagnostics(QueueManager._find_node()), ensure_ascii=False)

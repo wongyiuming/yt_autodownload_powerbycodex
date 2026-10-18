@@ -37,6 +37,16 @@ jobs:
           node --check extension/popup.js
           node tools/test_extension_host_version.js
 
+      - name: Regress cleanup races on real Windows processes (PowerShell 7 and 5.1)
+        shell: pwsh
+        run: |
+          & .\tools\test_windows_cleanup_model.ps1
+          & .\tools\test_windows_cleanup_races.ps1
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File tools/test_windows_cleanup_model.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Windows PowerShell 5.1 cleanup model regressions failed" }
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File tools/test_windows_cleanup_races.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Windows PowerShell 5.1 real-process race regressions failed" }
+
       - name: Smoke test real channel album folders
         # External website behavior must not mask a passing offline regression suite.
         continue-on-error: true
@@ -77,6 +87,11 @@ jobs:
         shell: pwsh
         run: |
           & .\tools\smoke_windows_install.ps1
+
+      - name: Regress interrupted upgrade and real FFmpeg process-tree cleanup
+        shell: pwsh
+        run: |
+          & .\tools\test_windows_upgrade.ps1
 
       - name: Probe YouTube metadata with frozen Host (informational)
         continue-on-error: true
