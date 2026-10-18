@@ -76,6 +76,19 @@ try {
     if ($AfterState -cne $BeforeState) { throw 'Blocked Host modified persisted queue.' }
     Write-Host 'INTERRUPTED_UPGRADE_NEW_HOST_BLOCKED_OK'
 
+    # Simulate interruption after the root was killed but before its children
+    # were retired. Recovery must use the durable identity journal, because
+    # the external worker/FFmpeg no longer have a live installed Host ancestor.
+    . (Join-Path $Repo 'native_host\process_cleanup_windows.ps1')
+    $Tree = Get-InstalledHostTree $AppDir
+    Save-HostCleanupJournal -Path (Join-Path $AppDir 'upgrade-processes.json') -Members $Tree.Members
+    Stop-Process -Id $Fixture.Id -Force
+    $Fixture.WaitForExit()
+    foreach ($ProcessId in $Pids[1..2]) {
+        if (-not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) { throw 'Orphan fixture exited early.' }
+    }
+    Write-Host 'INTERRUPTED_CLEANUP_ORPHANS_READY'
+
     # A successful rerun must kill the legacy root AND the external worker /
     # real FFmpeg grandchild before removing the barrier.
     & $Installer -NoLaunch
@@ -91,6 +104,8 @@ try {
     $Exclusive = [System.IO.File]::Open($Media, 'Open', 'ReadWrite', 'None')
     $Exclusive.Dispose()
     Write-Host 'REAL_FFMPEG_CHILD_GRANDCHILD_CLEANUP_OK'
+    if (Test-Path (Join-Path $AppDir 'upgrade-processes.json')) { throw 'Cleanup journal was not retired.' }
+    Write-Host 'INTERRUPTED_CLEANUP_ORPHAN_RECOVERY_OK'
     python tools/smoke_native_host.py $InstalledExe
     if ($LASTEXITCODE -ne 0) { throw 'Post-upgrade Host handshake failed.' }
     Write-Host 'WINDOWS_UPGRADE_REGRESSION_OK'

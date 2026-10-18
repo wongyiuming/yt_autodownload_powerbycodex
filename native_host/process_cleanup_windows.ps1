@@ -35,12 +35,41 @@ function Test-SameProcess {
     param($Process)
     $Current = Get-CimInstance Win32_Process -Filter "ProcessId = $($Process.ProcessId)" -ErrorAction Stop
     # Do not target a recycled PID from the original snapshot.
-    return ($null -ne $Current -and $Current.CreationDate -eq $Process.CreationDate)
+    $ExpectedTicks = if ($Process.CreationTicks) { [long]$Process.CreationTicks } else {
+        $Process.CreationDate.ToUniversalTime().Ticks
+    }
+    return ($null -ne $Current -and $Current.CreationDate.ToUniversalTime().Ticks -eq $ExpectedTicks)
+}
+
+function Save-HostCleanupJournal {
+    param([string]$Path, [array]$Members)
+    $Records = @($Members | ForEach-Object {
+        $Ticks = if ($_.CreationTicks) { [long]$_.CreationTicks } else { $_.CreationDate.ToUniversalTime().Ticks }
+        @{ ProcessId = [int]$_.ProcessId; CreationTicks = $Ticks }
+    })
+    # Commit the complete identity snapshot BEFORE terminating any parent.
+    # A rerun can then find external orphans even after an installer crash.
+    $Temp = $Path + '.tmp'
+    [System.IO.File]::WriteAllText($Temp, (ConvertTo-Json -InputObject $Records))
+    if (Test-Path -LiteralPath $Path) {
+        [System.IO.File]::Replace($Temp, $Path, $null)
+    } else {
+        [System.IO.File]::Move($Temp, $Path)
+    }
 }
 
 function Stop-InstalledHostTrees {
     param([string]$InstallDir)
     $Tree = Get-InstalledHostTree $InstallDir
+    $Journal = Join-Path $InstallDir 'upgrade-processes.json'
+    if (Test-Path -LiteralPath $Journal) {
+        $Previous = @(Get-Content -LiteralPath $Journal -Raw | ConvertFrom-Json)
+        foreach ($Record in $Previous) {
+            if (-not $Record.ProcessId -or -not $Record.CreationTicks) { throw 'Invalid Host cleanup journal.' }
+        }
+        $Tree.Members = @($Tree.Members) + $Previous
+    }
+    Save-HostCleanupJournal -Path $Journal -Members $Tree.Members
     # taskkill /T includes descendants, including PyInstaller's child and
     # FFmpeg/Node processes whose executable paths lie outside InstallDir.
     foreach ($Process in $Tree.Roots) {
@@ -65,5 +94,6 @@ function Stop-InstalledHostTrees {
     if ($Alive.Count -gt 0) {
         throw "Host tree cleanup failed; upgrade remains blocked. Surviving PIDs: $($Alive.ProcessId -join ', ')"
     }
+    Remove-Item -LiteralPath $Journal -ErrorAction Stop
     Write-Host "HOST_PROCESS_TREE_CLEANUP_OK ($($Tree.Members.Count) processes verified exited)"
 }
