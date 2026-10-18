@@ -65,11 +65,13 @@ function Stop-InstalledHostTrees {
     $Tree = Get-InstalledHostTree $InstallDir
     $Journal = Join-Path $InstallDir 'upgrade-processes.json'
     if (Test-Path -LiteralPath $Journal) {
-        $Previous = @(Get-Content -LiteralPath $Journal -Raw | ConvertFrom-Json)
+        # PS 5.1 emits a JSON array as a single pipeline object. Assign first
+        # and iterate explicitly so [] and nonempty arrays work in both shells.
+        $Previous = Get-Content -LiteralPath $Journal -Raw | ConvertFrom-Json
         foreach ($Record in $Previous) {
             if (-not $Record.ProcessId -or -not $Record.CreationTicks) { throw 'Invalid Host cleanup journal.' }
+            $Tree.Members = @($Tree.Members) + @($Record)
         }
-        $Tree.Members = @($Tree.Members) + $Previous
     }
     Save-HostCleanupJournal -Path $Journal -Members $Tree.Members
     # taskkill /T includes descendants, including PyInstaller's child and

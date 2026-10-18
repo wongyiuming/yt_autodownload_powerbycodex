@@ -110,9 +110,16 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Post-upgrade Host handshake failed.' }
     # Install-Windows.bat invokes Windows PowerShell 5.1, while Actions uses
     # PowerShell 7. Exercise the actual launcher runtime and journal replace.
-    [System.IO.File]::WriteAllText((Join-Path $AppDir 'upgrade-processes.json'), '[]')
-    & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $Installer -NoLaunch
-    if ($LASTEXITCODE -ne 0 -or (Test-Path $Marker)) { throw 'Windows PowerShell 5.1 installation failed.' }
+    foreach ($IncludeRecords in @($false, $true)) {
+        $Journal = Join-Path $AppDir 'upgrade-processes.json'
+        if ($IncludeRecords) {
+            Save-HostCleanupJournal -Path $Journal -Members $Tree.Members
+        } else {
+            [System.IO.File]::WriteAllText($Journal, '[]')
+        }
+        & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $Installer -NoLaunch
+        if ($LASTEXITCODE -ne 0 -or (Test-Path $Marker)) { throw 'Windows PowerShell 5.1 installation failed.' }
+    }
     Write-Host 'WINDOWS_POWERSHELL51_JOURNAL_RECOVERY_OK'
     Write-Host 'WINDOWS_UPGRADE_REGRESSION_OK'
 } finally {
