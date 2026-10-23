@@ -2,7 +2,7 @@
 
 把原来的 Python/yt-dlp 下载脚本改造成 **Chrome 操作入口 + Windows 本机下载组件**。安装完成后，日常不需要再打开 PyCharm、VS Code 或 Codex：只在 Chrome 中打开支持的视频、收藏夹、合集或歌单，然后从扩展加入队列。
 
-## Host / 扩展 1.3.0：bilibili 与酷狗音乐
+## v0.2.0：bilibili 与酷狗音乐（Host / 扩展 1.3.0）
 
 | 平台 | 支持的来源 | 下载后端 | 输出 |
 | --- | --- | --- | --- |
@@ -48,7 +48,7 @@ Downloads/YT-Autodownload/
 
 YouTube 保留原目录和下载记录。bilibili 使用独立的 yt-dlp archive；酷狗在 `audio/kugou/archive-audio.json` 中记录歌曲 hash 与完成文件位置，只有下载、长度校验、MP3 转换全部成功才归档。已归档的文件被删除后允许重新下载。酷狗取消时会停止 HTTP 读取或其 FFmpeg 转码；yt-dlp 的视频合并 / 转码阶段仍可能需要等待当前后处理结束才响应取消。
 
-本次源码和扩展版本均为 **1.3.0**。使用本分支源码的 `Install-Windows.bat`，或对应 PR 的 Windows Actions 安装包；历史 v0.1.8 Release 不包含新增平台。安装后在 `chrome://extensions` 重新加载稳定目录中的扩展，使新增站点权限生效。
+**Windows 发行版：v0.2.0；Native Host / Chrome 扩展：1.3.0。** [下载 Windows 安装包](https://github.com/wongyiuming/yt_autodownload_powerbycodex/releases/download/v0.2.0/yt_autodownload_windows.zip)，或查看 [Release 与 SHA256 校验文件](https://github.com/wongyiuming/yt_autodownload_powerbycodex/releases/tag/v0.2.0)。安装包已包含 Host EXE、FFmpeg 和 Node.js，无需另装 Python。解压后运行 `Install-Windows.bat`，再按下方步骤加载或重新加载 `%LOCALAPPDATA%\YTAutodownload\extension` 中的扩展，使新增站点权限生效。
 
 实际集合解析、下载样本与验证边界见 [多平台验证记录](docs/platform-support.md)。
 
@@ -180,13 +180,15 @@ UI 全部在 Chrome；下载、合并和文件整理由本机组件完成。
 
 ### Release 包（推荐）
 
-1. 打开仓库 **Releases**。
-2. 下载最新的 `yt_autodownload_windows.zip` 并解压。
-3. 双击 `Install-Windows.bat`。
+升级前请等待现有下载完成，或取消后确认任务已停止。
+
+1. 打开 [最新 Release](https://github.com/wongyiuming/yt_autodownload_powerbycodex/releases/latest)。
+2. 下载 Assets 中的 `yt_autodownload_windows.zip` 并完整解压；此文件包含预构建程序，GitHub 自动生成的 `Source code` 是源码包。
+3. 双击解压目录中的 `Install-Windows.bat`，等待显示安装验证成功。
 4. Chrome 打开 `chrome://extensions`。
 5. 开启右上角 **开发者模式**。
-6. 第一次安装：点击 **加载已解压的扩展程序**，选择 `extension`。
-7. 升级时：请加载/重新加载安装后固定的 `%LOCALAPPDATA%\YTAutodownload\extension` 目录，扩展内点击「重新连接 Host」，并检查版本号。
+6. 第一次安装：点击 **加载已解压的扩展程序**，选择安装后的 `%LOCALAPPDATA%\YTAutodownload\extension` 目录，可将此路径粘贴到文件夹选择器地址栏。
+7. 升级时：在扩展卡片点击重新加载；如果仍使用旧 ZIP 的解压目录，请改为上面的固定目录。打开扩展，点击「重新连接 Host」，确认扩展和已连接 Host 都显示 **1.3.0**。
 
 扩展 ID 固定为：
 
