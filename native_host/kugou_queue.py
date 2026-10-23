@@ -175,9 +175,15 @@ def download_kugou(manager, task, cancelled_error_cls, *, client=None) -> None:
                     source = work / ("source." + safe_name(media.ext, "bin", 8))
                     active_client.download(media, source, progress=progress, check_cancelled=check_cancelled)
                     check_cancelled()
-                    update(current_title=f"正在转换 MP3：{title}", speed="", eta="")
-                    converted = work / "converted.mp3"
-                    convert_to_mp3(manager.ffmpeg_path, source, converted, check_cancelled)
+                    if media.ext.lower() == "mp3":
+                        # HTTP already delivered the requested format. Preserve
+                        # its bytes instead of lossy MP3 -> MP3 re-encoding.
+                        update(current_title=f"正在保存 MP3：{title}", speed="", eta="")
+                        converted = source
+                    else:
+                        update(current_title=f"正在转换 MP3：{title}", speed="", eta="")
+                        converted = work / "converted.mp3"
+                        convert_to_mp3(manager.ffmpeg_path, source, converted, check_cancelled)
                     check_cancelled()
                     converted.replace(target)
                 archive[track.id] = target.relative_to(root).as_posix()

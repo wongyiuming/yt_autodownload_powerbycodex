@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | YouTube | 既有 yt-dlp 流程、频道专辑目录 | yt-dlp + FFmpeg | 默认匿名，用户可选当前 Chrome Cookie |
 | bilibili | yt-dlp 的 Bilibili 视频、收藏夹、合集、系列与短链接提取器 | yt-dlp + FFmpeg | 默认匿名，用户可选 bilibili Cookie |
-| 酷狗 | httpx 读取官网公开页面及完整歌单 API | httpx 流式请求 + FFmpeg 转 MP3 | 无 Cookie，不读取浏览器登录信息 |
+| 酷狗 | httpx 读取官网公开页面及完整歌单 API | httpx 流式请求，MP3 原字节保存，其他格式由 FFmpeg 转 MP3 | 无 Cookie，不读取浏览器登录信息 |
 
 `platform_urls.py` 与 `extension/platform_urls.js` 共享 URL fixture，避免弹窗接受的链接在 Host 被拒绝。任务平台由真实 URL 推导，不依赖消息中的平台字段。Cookie 按平台分别存储；YouTube 的 Node/EJS/播放器回退配置不会传给 bilibili。
 
@@ -42,7 +42,7 @@
 
 地址：[Toby Fox — Snowdin Town](https://www.kugou.com/song/#hash=FE2A4AC53981BB3FAF077CCA2461401A)。
 
-新实现无 Cookie 调用公开播放接口，返回 `sharefs.kugou.com` 上的 MP3 直链与 76 秒时长。`KugouClient.download()` 实际下载 **1,220,066 字节**，与 API 声明一致；随后调用本项目 `convert_to_mp3()`，成功生成 **1,916,423 字节** MP3。临时媒体在验证后删除，未放入仓库。
+新实现无 Cookie 调用公开播放接口，返回 `sharefs.kugou.com` 上的 MP3 直链与 76 秒时长。`KugouClient.download()` 实际下载 **1,220,066 字节**，与 API 声明一致。另外直接调用本项目 `convert_to_mp3()` 验证转换器，成功生成 **1,916,423 字节** MP3；实际队列会保留此类已有 MP3 的原字节，避免二次有损编码。临时媒体在验证后删除，未放入仓库。
 
 原媒体 SHA-256：`13b56227353fa59f512d9d918dda7bc0abb50233c061c323c5a22e27708d2937`。
 

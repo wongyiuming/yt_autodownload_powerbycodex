@@ -203,6 +203,20 @@ class KugouQueueTests(unittest.TestCase):
         self.assertEqual(list(root.rglob("*.mp3")), [])
         self.assertEqual(list(root.rglob(".kugou-*")), [])
 
+    def test_mp3_is_saved_unchanged_without_ffmpeg(self):
+        import kugou_queue
+        task = self.m.enqueue(KUGOU, "audio", "", [], False)
+        client = self.client(tracks=1)
+        client.resolve_track.side_effect = None
+        client.resolve_track.return_value = SimpleNamespace(title="Original MP3", ext="mp3")
+        original = b"ID3-original-audio-bytes"
+        client.download.side_effect = lambda media, path, **kw: path.write_bytes(original)
+        with patch.object(kugou_queue, "convert_to_mp3", side_effect=AssertionError("MP3 must not be re-encoded")):
+            kugou_queue.download_kugou(self.m, task, host_legacy.CancelledError, client=client)
+        files = list(self.m.download_root.rglob("*.mp3"))
+        self.assertEqual(len(files), 1)
+        self.assertEqual(files[0].read_bytes(), original)
+
     def test_kugou_dispatch_does_not_use_youtube_or_yt_dlp(self):
         import kugou_queue
         task = self.m.enqueue(KUGOU, "audio", "", [], False)
