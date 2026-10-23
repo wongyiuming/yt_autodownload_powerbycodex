@@ -6,6 +6,7 @@ import time
 import re
 
 import host_legacy
+from platform_urls import classify_source
 from youtube_runtime import (NonRetryableYoutubeError, download_with_fallback,
                              runtime_diagnostics, youtube_options)
 
@@ -21,12 +22,20 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
     def retry(self, task_id: str, cookies: list[dict] | None = None, use_cookies: bool | None = None) -> None:
         with self.lock:
             task = self._task(task_id)
-            if use_cookies is not None:
-                task.use_cookies = bool(use_cookies and cookies)
-                if task.use_cookies:
-                    self._write_cookies(cookies)
             if task.status not in {"error", "cancelled"}:
                 raise ValueError("只能重试失败或已取消的任务")
+            platform = classify_source(task.url).platform
+            task.platform = platform
+            if use_cookies is not None:
+                cookies = host_legacy.cookies_for_platform(cookies or [], platform)
+                task.use_cookies = bool(use_cookies and cookies)
+                if task.use_cookies:
+                    if platform == "youtube":
+                        self._write_cookies(cookies)
+                    else:
+                        self._write_cookies(cookies, platform)
+            if platform == "kugou":
+                task.use_cookies = False
             self.cancelled.discard(task_id)
             task.status = "queued"
             task.progress = 0.0
@@ -111,7 +120,15 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
             self.emit(force=True)
 
     def base_download(self, task) -> None:
+        platform = classify_source(task.url).platform
+        if task.id in self.cancelled:
+            raise cancelled_error_cls("用户取消任务")
+        if platform == "kugou":
+            from kugou_queue import download_kugou
+            return download_kugou(self, task, cancelled_error_cls)
         output_dir = self.download_root / ("audio" if task.mode == "audio" else "video")
+        if platform == "bilibili":
+            output_dir /= "bilibili"
         output_dir.mkdir(parents=True, exist_ok=True)
         archive = output_dir / f"archive-{task.mode}.txt"
         outtmpl = str(output_dir / "%(playlist_title,channel,uploader|Default)s" / "%(title)s [%(id)s].%(ext)s")
@@ -157,9 +174,15 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
             "concurrent_fragment_downloads": 4,
             "logger": host_legacy.HostLogger(),
         }
-        options.update(youtube_options(self.node_path, host_legacy.COOKIE_PATH, use_cookies=task.use_cookies))
+        if platform == "youtube":
+            options.update(youtube_options(self.node_path, host_legacy.COOKIE_PATH, use_cookies=task.use_cookies))
+        else:
+            options["no_plugins"] = True
+            cookie_path = host_legacy.cookie_path_for(platform)
+            if task.use_cookies and cookie_path.is_file():
+                options["cookiefile"] = str(cookie_path)
         host_legacy.HostLogger().info(
-            f"download start task={task.id} kind={task.kind} "
+            f"download start task={task.id} platform={platform} kind={task.kind} "
             f"cookiefile={bool(options.get('cookiefile'))} "
             f"yt-dlp={runtime_diagnostics(self.node_path)['yt_dlp_version']}"
         )
@@ -175,7 +198,17 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
         else:
             options.update({"format": "bv*+ba/b", "merge_output_format": "mp4"})
 
-        download_with_fallback(options, task.url)
+        if platform == "youtube":
+            download_with_fallback(options, task.url)
+        else:
+            # Bilibili uses its own yt-dlp extractors and browser credentials;
+            # YouTube's EJS/player-client fallback must never be applied here.
+            with host_legacy.yt_dlp.YoutubeDL(options) as ydl:
+                code = ydl.download([task.url])
+                if code:
+                    raise RuntimeError(f"bilibili yt-dlp 返回错误码 {code}")
+        if task.id in self.cancelled:
+            raise cancelled_error_cls("用户取消任务")
 
     queue_manager_cls.retry = retry
     queue_manager_cls._worker_loop = worker_loop
@@ -190,11 +223,13 @@ def install_version_info(queue_manager_cls) -> None:
     def host_info(self):
         info = original(self)
         info.update({
-            "version": "1.2.4",
+            "version": "1.3.0",
             **runtime_diagnostics(self.node_path),
             "album_organization": True,
             "auto_retry_count": AUTO_RETRY_COUNT,
             "manual_retry": True,
+            "supported_platforms": ["youtube", "bilibili", "kugou"],
+            "download_backends": {"youtube": "yt-dlp", "bilibili": "yt-dlp", "kugou": "httpx"},
         })
         return info
 

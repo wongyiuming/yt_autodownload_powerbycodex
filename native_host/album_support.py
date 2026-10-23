@@ -499,7 +499,7 @@ def install_album_support(queue_manager_cls, cancelled_error_cls) -> None:
         return info
 
     def download(self, task):
-        if task.kind == "channel":
+        if task.kind == "channel" and getattr(task, "platform", "youtube") == "youtube":
             organizer = AlbumOrganizer(self, cancelled_error_cls)
             organizer.use_cookies = bool(task.use_cookies)
             return organizer.download_channel(task)

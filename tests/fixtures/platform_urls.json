@@ -1,0 +1,295 @@
+{
+  "valid": [
+    {
+      "raw": "https://youtu.be/S0pt6PEApy0?t=5",
+      "platform": "youtube",
+      "kind": "video",
+      "url": "https://www.youtube.com/watch?v=S0pt6PEApy0"
+    },
+    {
+      "raw": "https://www.youtube.com/watch?v=S0pt6PEApy0&list=PL_music&index=4",
+      "platform": "youtube",
+      "kind": "playlist",
+      "url": "https://www.youtube.com/playlist?list=PL_music"
+    },
+    {
+      "raw": "https://www.youtube.com/playlist?index=2&list=PL_music",
+      "platform": "youtube",
+      "kind": "playlist",
+      "url": "https://www.youtube.com/playlist?list=PL_music"
+    },
+    {
+      "raw": "http://m.youtube.com/watch?v=S0pt6PEApy0",
+      "platform": "youtube",
+      "kind": "video",
+      "url": "https://www.youtube.com/watch?v=S0pt6PEApy0"
+    },
+    {
+      "raw": "https://music.youtube.com/watch?v=S0pt6PEApy0",
+      "platform": "youtube",
+      "kind": "video",
+      "url": "https://www.youtube.com/watch?v=S0pt6PEApy0"
+    },
+    {
+      "raw": "https://www.youtube.com/shorts/S0pt6PEApy0?feature=share",
+      "platform": "youtube",
+      "kind": "video",
+      "url": "https://www.youtube.com/watch?v=S0pt6PEApy0"
+    },
+    {
+      "raw": "https://www.youtube.com/live/S0pt6PEApy0?feature=share",
+      "platform": "youtube",
+      "kind": "video",
+      "url": "https://www.youtube.com/watch?v=S0pt6PEApy0"
+    },
+    {
+      "raw": "https://www.youtube.com/embed/S0pt6PEApy0?feature=share",
+      "platform": "youtube",
+      "kind": "video",
+      "url": "https://www.youtube.com/watch?v=S0pt6PEApy0"
+    },
+    {
+      "raw": "https://www.youtube.com/@music/releases?view=1",
+      "platform": "youtube",
+      "kind": "channel",
+      "url": "https://www.youtube.com/@music"
+    },
+    {
+      "raw": "https://www.youtube.com/channel/UC123/releases?view=1",
+      "platform": "youtube",
+      "kind": "channel",
+      "url": "https://www.youtube.com/channel/UC123"
+    },
+    {
+      "raw": "https://www.youtube.com/c/music/releases?view=1",
+      "platform": "youtube",
+      "kind": "channel",
+      "url": "https://www.youtube.com/c/music"
+    },
+    {
+      "raw": "https://www.youtube.com/user/music/releases?view=1",
+      "platform": "youtube",
+      "kind": "channel",
+      "url": "https://www.youtube.com/user/music"
+    },
+    {
+      "raw": "https://www.youtube.com/@音樂/videos",
+      "platform": "youtube",
+      "kind": "channel",
+      "url": "https://www.youtube.com/@%E9%9F%B3%E6%A8%82"
+    },
+    {
+      "raw": "https://www.youtube.com/@music!'/videos",
+      "platform": "youtube",
+      "kind": "channel",
+      "url": "https://www.youtube.com/@music%21%27"
+    },
+    {
+      "raw": " https://WWW.YOUTUBE.COM:443/watch?v=S0pt6PEApy0 ",
+      "platform": "youtube",
+      "kind": "video",
+      "url": "https://www.youtube.com/watch?v=S0pt6PEApy0"
+    },
+    {
+      "raw": "https://space.bilibili.com/84912/favlist?ftype=create&fid=1103407912&pn=9&bvid=BV1bK411W797",
+      "platform": "bilibili",
+      "kind": "favorites",
+      "url": "https://www.bilibili.com/medialist/detail/ml1103407912"
+    },
+    {
+      "raw": "https://www.bilibili.com/medialist/detail/ml1103407912/?bvid=BV1bK411W797&oid=1",
+      "platform": "bilibili",
+      "kind": "favorites",
+      "url": "https://www.bilibili.com/medialist/detail/ml1103407912"
+    },
+    {
+      "raw": "https://www.bilibili.com/medialist/play/ml1103407912/?bvid=BV1bK411W797&oid=1",
+      "platform": "bilibili",
+      "kind": "favorites",
+      "url": "https://www.bilibili.com/medialist/detail/ml1103407912"
+    },
+    {
+      "raw": "https://www.bilibili.com/list/ml1103407912/?bvid=BV1bK411W797&oid=1",
+      "platform": "bilibili",
+      "kind": "favorites",
+      "url": "https://www.bilibili.com/medialist/detail/ml1103407912"
+    },
+    {
+      "raw": "https://space.bilibili.com/2142762/channel/collectiondetail?ctype=0&sid=57445",
+      "platform": "bilibili",
+      "kind": "collection",
+      "url": "https://space.bilibili.com/2142762/lists/57445?type=season"
+    },
+    {
+      "raw": "https://space.bilibili.com/1958703906/channel/seriesdetail?ctype=0&sid=547718",
+      "platform": "bilibili",
+      "kind": "collection",
+      "url": "https://space.bilibili.com/1958703906/lists/547718?type=series"
+    },
+    {
+      "raw": "https://space.bilibili.com/2142762/lists/3662502?sort=desc&type=season&page=3",
+      "platform": "bilibili",
+      "kind": "collection",
+      "url": "https://space.bilibili.com/2142762/lists/3662502?type=season"
+    },
+    {
+      "raw": "https://space.bilibili.com/1958703906/lists/547718/?page=5&type=series",
+      "platform": "bilibili",
+      "kind": "collection",
+      "url": "https://space.bilibili.com/1958703906/lists/547718?type=series"
+    },
+    {
+      "raw": "https://space.bilibili.com/2142762/lists/3662502",
+      "platform": "bilibili",
+      "kind": "collection",
+      "url": "https://space.bilibili.com/2142762/lists/3662502?type=season"
+    },
+    {
+      "raw": "https://www.bilibili.com/list/1958703906?sid=547718&bvid=BV1bK411W797&oid=12",
+      "platform": "bilibili",
+      "kind": "collection",
+      "url": "https://www.bilibili.com/list/1958703906?sid=547718"
+    },
+    {
+      "raw": "https://www.bilibili.com/medialist/play/1958703906?business=space_series&business_id=547718&desc=1",
+      "platform": "bilibili",
+      "kind": "collection",
+      "url": "https://space.bilibili.com/1958703906/lists/547718?type=series"
+    },
+    {
+      "raw": "https://www.bilibili.com/medialist/play/1958703906?business=space_collection&business_id=547718&desc=1",
+      "platform": "bilibili",
+      "kind": "collection",
+      "url": "https://space.bilibili.com/1958703906/lists/547718?type=season"
+    },
+    {
+      "raw": "https://www.bilibili.com/video/BV1bK411W797?spm_id_from=abc",
+      "platform": "bilibili",
+      "kind": "video",
+      "url": "https://www.bilibili.com/video/BV1bK411W797"
+    },
+    {
+      "raw": "http://m.bilibili.com/video/BV1bK411W797/?p=4&share_source=copy",
+      "platform": "bilibili",
+      "kind": "video",
+      "url": "https://www.bilibili.com/video/BV1bK411W797?p=4"
+    },
+    {
+      "raw": "https://www.bilibili.com/video/AV12345",
+      "platform": "bilibili",
+      "kind": "video",
+      "url": "https://www.bilibili.com/video/av12345"
+    },
+    {
+      "raw": "https://b23.tv/AbC123?share_source=copy",
+      "platform": "bilibili",
+      "kind": "shortlink",
+      "url": "https://b23.tv/AbC123"
+    },
+    {
+      "raw": "https://www.kugou.com/yy/special/single/collection_3_1556150471_784_0.html?from=web",
+      "platform": "kugou",
+      "kind": "playlist",
+      "url": "https://www.kugou.com/yy/special/single/collection_3_1556150471_784_0.html"
+    },
+    {
+      "raw": "https://www.kugou.com/yy/special/single/123.html",
+      "platform": "kugou",
+      "kind": "playlist",
+      "url": "https://www.kugou.com/yy/special/single/123.html"
+    },
+    {
+      "raw": "http://m.kugou.com/plist/list/123?json=true",
+      "platform": "kugou",
+      "kind": "playlist",
+      "url": "https://www.kugou.com/yy/special/single/123.html"
+    },
+    {
+      "raw": "https://www.kugou.com/song/#hash=abcdef0123456789abcdef0123456789&album_id=12345",
+      "platform": "kugou",
+      "kind": "song",
+      "url": "https://www.kugou.com/song/#hash=ABCDEF0123456789ABCDEF0123456789&album_id=12345"
+    },
+    {
+      "raw": "https://www.kugou.com/song/?hash=ABCDEF0123456789ABCDEF0123456789&album_id=0",
+      "platform": "kugou",
+      "kind": "song",
+      "url": "https://www.kugou.com/song/#hash=ABCDEF0123456789ABCDEF0123456789&album_id=0"
+    },
+    {
+      "raw": "https://www.kugou.com/yy/index.php?r=play/getdata&hash=ABCDEF0123456789ABCDEF0123456789&album_id=1",
+      "platform": "kugou",
+      "kind": "song",
+      "url": "https://www.kugou.com/song/#hash=ABCDEF0123456789ABCDEF0123456789&album_id=1"
+    },
+    {
+      "raw": "https://www.kugou.com/song/#hash=ABCDEF0123456789ABCDEF0123456789",
+      "platform": "kugou",
+      "kind": "song",
+      "url": "https://www.kugou.com/song/#hash=ABCDEF0123456789ABCDEF0123456789"
+    },
+    {
+      "raw": "https://www.kugou.com/mixsong/j5ete87.html?from=music",
+      "platform": "kugou",
+      "kind": "song",
+      "url": "https://www.kugou.com/mixsong/j5ete87.html"
+    },
+    {
+      "raw": "https://www.bilibili.com/list/2142762?otype=1&sid=3662502&bvid=BV1iy411i7ab",
+      "platform": "bilibili",
+      "kind": "collection",
+      "url": "https://www.bilibili.com/list/2142762?sid=3662502&otype=1"
+    }
+  ],
+  "invalid": [
+    "",
+    "not-a-url",
+    "www.youtube.com/watch?v=x",
+    "//www.youtube.com/watch?v=x",
+    "ftp://www.youtube.com/watch?v=x",
+    "file:///tmp/music.mp3",
+    "javascript:alert(1)",
+    "https://www.youtube.com.evil.example/watch?v=x",
+    "https://evil.youtube.com/watch?v=x",
+    "https://youtube.com@evil.example/watch?v=x",
+    "https://evil.example@www.youtube.com/watch?v=x",
+    "https://@www.youtube.com/watch?v=x",
+    "https://%79outube.com/watch?v=x",
+    "https://www.youtube.com:8080/watch?v=x",
+    "https://www.youtube.com:80/watch?v=x",
+    "https://www.youtube.com/watch?v=with space",
+    "https://www.youtube.com/wa\ntch?v=x",
+    "https://www.youtube.com\\@evil.example/watch?v=x",
+    "https://www.youtube.com/",
+    "https://www.youtube.com/playlist",
+    "https://www.youtube.com/watch",
+    "https://www.youtube.com/@",
+    "https://youtu.be/",
+    "https://space.bilibili.com/84912",
+    "https://space.bilibili.com/84912/favlist",
+    "https://space.bilibili.com/84912/favlist?fid=0",
+    "https://space.bilibili.com/84912/favlist?fid=123abc",
+    "https://space.bilibili.com/84912/lists/123?type=unknown",
+    "https://bilibili.com.evil.example/video/BV1bK411W797",
+    "https://www.bilibili.com/video/BVbad",
+    "https://www.bilibili.com/video/BV1bK411W797?p=0",
+    "https://www.bilibili.com/video/BV1bK411W797?p=-1",
+    "https://www.bilibili.com/video/BV1bK411W797?p=",
+    "https://www.bilibili.com/video/BV1bK411W797?p=1.5",
+    "https://www.bilibili.com/video/../video/BV1bK411W797",
+    "https://www.bilibili.com/video/%2e%2e/video/BV1bK411W797",
+    "https://www.bilibili.com/list/84912",
+    "https://b23.tv/",
+    "https://b23.tv/abc/extra",
+    "https://www.kugou.com/",
+    "https://www.kugou.com/yy/special/single/collection_3_123.html",
+    "https://www.kugou.com/yy/special/single/../../../private.html",
+    "https://www.kugou.com/song/#hash=123",
+    "https://www.kugou.com/song/#hash=ABCDEF0123456789ABCDEF0123456789&album_id=abc",
+    "https://www.kugou.com/song/?mixsongid=123",
+    "https://www.kugou.com.evil.example/yy/special/single/123.html",
+    "https://www.kugou.com/mixsong/.html",
+    "https://www.kugou.com/mixsong/abc/extra.html",
+    "https://www.bilibili.com/list/2142762?sid=3662502&otype=bad"
+  ]
+}

@@ -14,7 +14,7 @@ from archive_location import install_archive_location
 from channel_enhancements import install_channel_enhancements
 from host_legacy import CancelledError, HostLogger, NativeWriter, QueueManager, read_message
 from runtime_enhancements import install_runtime_enhancements, install_version_info
-from youtube_runtime import runtime_diagnostics, extract_with_fallback, youtube_options
+from youtube_runtime import runtime_diagnostics
 
 # Base downloader/retry first; channel album logic wraps it afterwards.
 install_runtime_enhancements(QueueManager, CancelledError)
@@ -26,6 +26,14 @@ install_version_info(QueueManager)
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--smoke-local-kugou":
+        from local_smoke import smoke_local_kugou
+        try:
+            print(json.dumps(smoke_local_kugou(), ensure_ascii=False))
+            return 0
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+            return 1
     if len(sys.argv) > 1 and sys.argv[1] == "--smoke-local-mp3":
         from local_smoke import smoke_local_mp3
         try:
@@ -39,22 +47,17 @@ def main() -> int:
         return 0
     if len(sys.argv) > 1 and sys.argv[1] == "--probe-url":
         if len(sys.argv) < 3:
-            print("Usage: yt_autodownload_host.exe --probe-url <youtube-url>", file=sys.stderr)
+            print("Usage: yt_autodownload_host.exe --probe-url <youtube/bilibili/kugou-url>", file=sys.stderr)
             return 2
         # A public diagnostic must not access user credentials.
         # It extracts metadata only: no download or postprocessing.
         node_path = QueueManager._find_node()
-        options = {
-            "quiet": True, "no_warnings": False, "skip_download": True,
-            "noplaylist": True, "verbose": True, "logger": HostLogger(),
-        }
-        options.update(youtube_options(node_path, Path(os.devnull)))
         try:
-            info = extract_with_fallback(options, sys.argv[2])
+            from platform_probe import probe_source
+            info = probe_source(sys.argv[2], node_path)
             print(json.dumps({
                 "ok": True,
-                "id": info.get("id"),
-                "format_count": len(info.get("formats") or []),
+                **info,
                 **runtime_diagnostics(node_path),
             }, ensure_ascii=False))
             return 0

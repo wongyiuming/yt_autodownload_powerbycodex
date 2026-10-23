@@ -13,7 +13,7 @@ if (-not $Manifest.path.Contains("\versions\")) {
 }
 if (-not (Test-Path $Manifest.path)) { throw "Registered host executable is missing." }
 $Health = (& $Manifest.path --diagnostics | ConvertFrom-Json)
-if ($Health.host_version -ne "1.2.4") { throw "Installed host version mismatched." }
+if ($Health.host_version -ne "1.3.0") { throw "Installed host version mismatched." }
 $Extension = Get-Content $StableExt -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($Extension.version -ne $Health.host_version) { throw "Installed extension mismatch." }
 

@@ -25,11 +25,15 @@ input[type="url"]:focus { border-color: #6e7781; box-shadow: 0 0 0 2px rgba(9,10
 .badge.video { background: #fff0f3; color: #cf173c; }
 .badge.playlist { background: #eef6ff; color: #0969da; }
 .badge.channel { background: #f2f0ff; color: #6f42c1; }
+.badge.favorites, .badge.collection { background: #e7f7fc; color: #087ca1; }
+.badge.song { background: #e9f8ef; color: #18743c; }
+.badge.shortlink { background: #eef6ff; color: #0969da; }
 .badge.unknown { background: #f0f2f5; color: #667085; }
 .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
 .mode { border: 1px solid #d8dee4; border-radius: 10px; padding: 10px; display: grid; gap: 3px; cursor: pointer; }
 .mode input { display: none; }
 .mode.active { border-color: #ff0033; background: #fff7f8; }
+.mode.disabled { opacity: .45; cursor: not-allowed; }
 .mode-title { font-weight: 700; font-size: 13px; }
 .mode small { color: #667085; line-height: 1.35; }
 .channel-tools { margin-top: 8px; padding: 10px; border: 1px dashed #c9b8ef; border-radius: 10px; background: #faf8ff; }

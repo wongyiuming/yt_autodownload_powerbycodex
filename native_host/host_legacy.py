@@ -16,7 +16,8 @@ import threading
 import time
 import traceback
 import uuid
-from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
+
+from platform_urls import classify_source
 
 import imageio_ffmpeg
 import yt_dlp
@@ -30,6 +31,7 @@ HOST_NAME = "com.wongyiuming.yt_autodownload"
 APP_DIR = Path(os.getenv("LOCALAPPDATA") or Path.home()) / "YTAutodownload"
 STATE_PATH = APP_DIR / "state.json"
 COOKIE_PATH = APP_DIR / "youtube-cookies.txt"
+BILIBILI_COOKIE_PATH = APP_DIR / "bilibili-cookies.txt"
 DEFAULT_DOWNLOAD_ROOT = Path.home() / "Downloads" / "YT-Autodownload"
 TERMINAL = {"done", "error", "cancelled"}
 LOG_PATH = APP_DIR / "host.log"
@@ -40,45 +42,38 @@ def now_iso() -> str:
 
 
 def classify_url(raw: str) -> tuple[str, str]:
-    value = (raw or "").strip()
-    parsed = urlsplit(value)
-    if parsed.scheme not in {"http", "https"}:
-        raise ValueError("仅支持 http/https URL")
-    host = parsed.netloc.lower().split(":", 1)[0]
-    if host.startswith("www."):
-        host = host[4:]
+    """Compatibility interface used by the YouTube album organizer."""
+    source = classify_source(raw)
+    return source.kind, source.url
 
-    if host == "youtu.be":
-        video_id = next((part for part in parsed.path.split("/") if part), "")
-        if not video_id:
-            raise ValueError("YouTube 短链接缺少视频 ID")
-        return "video", f"https://www.youtube.com/watch?v={video_id}"
 
-    if host not in {"youtube.com", "m.youtube.com", "music.youtube.com"}:
-        raise ValueError("当前版本仅接受 YouTube 视频、播放列表或公开频道 URL")
+def cookie_path_for(platform: str) -> Path:
+    if platform == "youtube":
+        return COOKIE_PATH
+    if platform == "bilibili":
+        return BILIBILI_COOKIE_PATH
+    raise ValueError("该平台不使用浏览器 Cookie")
 
-    parts = [part for part in parsed.path.split("/") if part]
-    query = parse_qs(parsed.query)
-    list_id = (query.get("list") or [""])[0]
-    if parsed.path == "/playlist" and list_id:
-        return "playlist", f"https://www.youtube.com/playlist?{urlencode({'list': list_id})}"
-    if parsed.path == "/watch" and list_id:
-        return "playlist", f"https://www.youtube.com/playlist?{urlencode({'list': list_id})}"
-    if parsed.path == "/watch" and (query.get("v") or [""])[0]:
-        video_id = (query.get("v") or [""])[0]
-        return "video", f"https://www.youtube.com/watch?v={video_id}"
-    if len(parts) >= 2 and parts[0] in {"shorts", "live", "embed"}:
-        return "video", f"https://www.youtube.com/watch?v={parts[1]}"
 
-    root_parts: list[str] | None = None
-    if parts and parts[0].startswith("@"):
-        root_parts = [parts[0]]
-    elif len(parts) >= 2 and parts[0] in {"channel", "c", "user"}:
-        root_parts = parts[:2]
-    if root_parts:
-        return "channel", f"https://www.youtube.com/{'/'.join(root_parts)}"
-
-    raise ValueError("无法识别为单个视频、视频列表或公开频道")
+def cookies_for_platform(cookies: list[dict], platform: str) -> list[dict]:
+    """Native Messaging input must not mix credentials from different sites."""
+    expected = {"youtube": "youtube.com", "bilibili": "bilibili.com"}.get(platform)
+    if not expected:
+        return []
+    result = []
+    for cookie in cookies:
+        if not isinstance(cookie, dict):
+            continue
+        domain = str(cookie.get("domain") or "").lstrip(".").lower()
+        if domain != expected and not domain.endswith("." + expected):
+            continue
+        if any(any(c in str(cookie.get(key) or "") for c in "\r\n\t")
+               for key in ("domain", "path", "name", "value")):
+            continue
+        if not cookie.get("name"):
+            continue
+        result.append(cookie)
+    return result
 
 
 @dataclass
@@ -88,6 +83,7 @@ class Task:
     kind: str
     mode: str
     title: str = ""
+    platform: str = "youtube"
     use_cookies: bool = False
     status: str = "queued"
     progress: float = 0.0
@@ -202,7 +198,19 @@ class QueueManager:
             if configured_root:
                 self.download_root = Path(configured_root)
             for item in data.get("tasks", []):
+                if not isinstance(item, dict):
+                    continue
                 task = Task(**{field: item.get(field, getattr(Task("", "", "", ""), field)) for field in Task.__dataclass_fields__})
+                # Old state files have no platform; derive it from the URL rather
+                # than trusting a stale or user-supplied platform field.
+                try:
+                    task.platform = classify_source(task.url).platform
+                except (ValueError, TypeError, AttributeError):
+                    # New validation must not erase unrelated queued tasks when
+                    # an old state file contains an obsolete or invalid URL.
+                    task.platform = ""
+                    task.status = "error"
+                    task.error = "此历史任务的来源 URL 已不受支持，请移除后使用有效地址重新添加"
                 if task.status == "downloading":
                     task.status = "queued"
                     task.error = ""
@@ -219,8 +227,8 @@ class QueueManager:
                 "download_root": str(self.download_root),
                 "tasks": [asdict(task) for task in self.tasks],
             }
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(STATE_PATH)
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(STATE_PATH)
 
     def emit(self, *, force: bool = False) -> None:
         now = time.monotonic()
@@ -231,19 +239,26 @@ class QueueManager:
         self.writer.send({"event": "queue", "queue": self.snapshot()})
 
     def enqueue(self, raw_url: str, mode: str, title: str, cookies: list[dict], use_cookies: bool = False) -> Task:
-        kind, normalized = classify_url(raw_url)
+        source = classify_source(raw_url)
         if mode not in {"video", "audio"}:
             raise ValueError("mode 必须是 video 或 audio")
+        if source.platform == "kugou" and mode != "audio":
+            raise ValueError("酷狗音乐仅支持音频下载，请选择 MP3")
+        cookies = cookies_for_platform(cookies, source.platform)
         enabled = bool(use_cookies and cookies)
         if enabled:
-            self._write_cookies(cookies)
-        elif use_cookies:
+            if source.platform == "youtube":
+                self._write_cookies(cookies)
+            else:
+                self._write_cookies(cookies, source.platform)
+        elif use_cookies and source.platform != "kugou":
             HostLogger().warning("用户勾选登录 Cookie，但没有从 Chrome 获取到 Cookie；本任务按公开内容处理。")
         stamp = now_iso()
         task = Task(
             id=uuid.uuid4().hex[:12],
-            url=normalized,
-            kind=kind,
+            url=source.url,
+            kind=source.kind,
+            platform=source.platform,
             mode=mode,
             title=(title or "").strip(),
             use_cookies=enabled,
@@ -287,18 +302,17 @@ class QueueManager:
                 return task
         raise ValueError("任务不存在")
 
-    def _write_cookies(self, cookies: list[dict]) -> None:
+    def _write_cookies(self, cookies: list[dict], platform: str = "youtube") -> None:
+        path = cookie_path_for(platform)
+        cookies = cookies_for_platform(cookies, platform)
         if not cookies:
-            COOKIE_PATH.unlink(missing_ok=True)
+            path.unlink(missing_ok=True)
             return
         lines = ["# Netscape HTTP Cookie File"]
         for cookie in cookies:
             if not isinstance(cookie, dict):
                 continue
             domain = str(cookie.get("domain") or "")
-            host = domain.lstrip(".").lower()
-            if host != "youtube.com" and not host.endswith(".youtube.com"):
-                continue
             lines.append("\t".join([
                 domain,
                 "TRUE" if domain.startswith(".") else "FALSE",
@@ -309,12 +323,12 @@ class QueueManager:
                 str(cookie.get("value") or "").replace("\t", "").replace("\n", ""),
             ]))
         if len(lines) > 1:
-            COOKIE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            temporary = COOKIE_PATH.with_name(COOKIE_PATH.name + ".tmp")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(path.name + ".tmp")
             temporary.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
-            temporary.replace(COOKIE_PATH)
+            temporary.replace(path)
         else:
-            COOKIE_PATH.unlink(missing_ok=True)
+            path.unlink(missing_ok=True)
 
     def _worker_loop(self) -> None:
         while True:

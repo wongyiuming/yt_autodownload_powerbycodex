@@ -6,13 +6,14 @@ const vm = require("node:vm");
 const path = require("node:path");
 
 const source = fs.readFileSync(path.join(__dirname, "../extension/background.js"), "utf8");
+const expectedVersion = JSON.parse(fs.readFileSync(path.join(__dirname, "../extension/manifest.json"), "utf8")).version;
 
 function harness(actualVersion) {
   const ports = [];
   const dispatched = [];
   const chrome = {
     runtime: {
-      getManifest() { return { version: "1.2.4" }; },
+      getManifest() { return { version: expectedVersion }; },
       lastError: null,
       sendMessage() { return Promise.resolve(); },
       onInstalled: { addListener() {} },
@@ -49,6 +50,11 @@ function harness(actualVersion) {
     clearTimeout,
     queueMicrotask,
     Map,
+    URL,
+    URLSearchParams,
+    importScripts(filename) {
+      vm.runInContext(fs.readFileSync(path.join(__dirname, "../extension", filename), "utf8"), context, { filename });
+    },
   });
   vm.runInContext(source, context, { filename: "background.js" });
   return { context, ports, dispatched };
@@ -68,19 +74,19 @@ async function testOldHostRejected() {
   assert.equal(h.dispatched.filter(x => x === "enqueue").length, 0);
   await assert.rejects(
     vm.runInContext("reconnectHost()", h.context),
-    /当前 1\.2\.0.*需要 1\.2\.4/,
+    new RegExp(`当前 1\\.2\\.0.*需要 ${expectedVersion.replaceAll(".", "\\.")}`),
   );
   assert.equal(vm.runInContext("compatible", h.context), false);
   assert.ok(h.ports.length >= 2, "reconnect opened another Native Messaging port");
 }
 
 async function testCurrentHostAccepted() {
-  const h = harness("1.2.4");
+  const h = harness(expectedVersion);
   await flush();
   assert.equal(vm.runInContext("compatible", h.context), true);
   const result = await vm.runInContext("reconnectHost()", h.context);
   assert.equal(result.ok, true);
-  assert.equal(result.host.version, "1.2.4");
+  assert.equal(result.host.version, expectedVersion);
   assert.equal(vm.runInContext("compatible", h.context), true);
 }
 

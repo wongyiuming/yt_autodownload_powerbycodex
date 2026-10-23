@@ -1,3 +1,5 @@
+importScripts("platform_urls.js");
+
 const HOST_NAME = "com.wongyiuming.yt_autodownload";
 const EXPECTED_HOST_VERSION = chrome.runtime.getManifest().version;
 
@@ -135,9 +137,22 @@ async function reconnectHost() {
   return { ok: true, host: hostInfo, queue, connected: true, compatible: true };
 }
 
-async function youtubeCookies() {
+function recognizedSource(raw) {
+  const source = classifySourceUrl(raw || "");
+  if (source.kind === "unknown") throw new Error("不支持的来源 URL");
+  return source;
+}
+
+async function platformCookies(platform, enabled) {
+  const domain = { youtube: "youtube.com", bilibili: "bilibili.com" }[platform];
+  // Kugou always uses public HTTP requests, including on retries.
+  if (!enabled || !domain) return [];
   try {
-    return await chrome.cookies.getAll({ domain: ".youtube.com" });
+    const cookies = await chrome.cookies.getAll({ domain });
+    return cookies.filter(cookie => {
+      const host = String(cookie.domain || "").replace(/^\./, "").toLowerCase();
+      return host === domain || host.endsWith(`.${domain}`);
+    });
   } catch (_) {
     return [];
   }
@@ -161,27 +176,39 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return;
     }
     if (message.type === "enqueue") {
-      const cookies = message.useCookies ? await youtubeCookies() : [];
+      const source = recognizedSource(message.url);
+      const useCookies = source.platform !== "kugou" && Boolean(message.useCookies);
+      const cookies = await platformCookies(source.platform, useCookies);
       const result = await rpc("enqueue", {
-        url: message.url,
-        mode: message.mode,
-        kind: message.kind,
+        url: source.normalizedUrl,
+        mode: source.platform === "kugou" ? "audio" : message.mode,
+        kind: source.kind,
+        platform: source.platform,
         title: message.title || "",
         cookies,
-        use_cookies: Boolean(message.useCookies),
+        use_cookies: useCookies,
       }, 60000);
       queue = result.queue || queue;
       sendResponse(result);
       return;
     }
     if (message.type === "repairChannel") {
-      const cookies = message.useCookies ? await youtubeCookies() : [];
-      sendResponse(await rpc("repair_channel", { url: message.url, cookies }, 10 * 60 * 1000));
+      const source = recognizedSource(message.url);
+      if (source.platform !== "youtube" || source.kind !== "channel") {
+        throw new Error("频道整理只适用于 YouTube 公开频道");
+      }
+      const cookies = await platformCookies(source.platform, Boolean(message.useCookies));
+      sendResponse(await rpc("repair_channel", { url: source.normalizedUrl, cookies }, 10 * 60 * 1000));
       return;
     }
     if (message.type === "retry") {
-      const cookies = message.useCookies ? await youtubeCookies() : [];
-      const result = await rpc("retry", { task_id: message.taskId, cookies, use_cookies: Boolean(message.useCookies) });
+      const task = queue.find(item => item.id === message.taskId);
+      if (!task) throw new Error("任务不存在，请刷新队列后重试");
+      // Derive the platform from the task itself, never the currently open tab.
+      const source = recognizedSource(task.url);
+      const useCookies = source.platform !== "kugou" && Boolean(message.useCookies ?? task.use_cookies);
+      const cookies = await platformCookies(source.platform, useCookies);
+      const result = await rpc("retry", { task_id: message.taskId, cookies, use_cookies: useCookies });
       queue = result.queue || queue;
       sendResponse(result);
       return;
