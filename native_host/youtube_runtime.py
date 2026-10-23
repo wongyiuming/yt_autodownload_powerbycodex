@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 import yt_dlp
+from httpx import __version__ as HTTPX_VERSION
 from yt_dlp.version import __version__ as YT_DLP_VERSION
 
 RELOAD_MARKER = "the page needs to be reloaded"
@@ -166,7 +167,8 @@ def runtime_diagnostics(node_path: str | None) -> dict:
     except importlib.metadata.PackageNotFoundError:
         ejs_version = ""
     return {
-        "host_version": "1.2.4",
+        "host_version": "1.3.0",
+        "httpx_version": HTTPX_VERSION,
         "yt_dlp_version": YT_DLP_VERSION,
         "ejs_available": importlib.util.find_spec("yt_dlp_ejs") is not None,
         "ejs_version": ejs_version,

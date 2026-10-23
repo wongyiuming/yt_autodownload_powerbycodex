@@ -10,80 +10,73 @@ const queueCount = document.getElementById("queueCount");
 const hostState = document.getElementById("hostState");
 const hostDetails = document.getElementById("hostDetails");
 const useCookies = document.getElementById("useCookies");
+const cookieLabel = document.getElementById("cookieLabel");
 
-let detected = { kind: "unknown", normalizedUrl: "", label: "未识别" };
+let detected = { platform: "", kind: "unknown", normalizedUrl: "", label: "未识别" };
 let state = { connected: false, queue: [], hostInfo: {} };
 let currentTitle = "";
 let repairing = false;
+const cookiePreferences = { youtube: false, bilibili: false };
 const expectedHostVersion = chrome.runtime.getManifest().version;
 
 function hostReady() {
   return state.connected && state.hostInfo?.version === expectedHostVersion;
 }
 
-function classifyYoutubeUrl(raw) {
-  try {
-    const url = new URL(raw.trim());
-    const host = url.hostname.toLowerCase().replace(/^www\./, "");
-    if (host === "youtu.be") {
-      const id = url.pathname.split("/").filter(Boolean)[0];
-      if (!id) throw new Error("缺少视频 ID");
-      return { kind: "video", label: "单个视频", normalizedUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(id)}` };
-    }
-    if (!["youtube.com", "m.youtube.com", "music.youtube.com"].includes(host)) {
-      return { kind: "unknown", label: "非 YouTube URL", normalizedUrl: raw.trim() };
-    }
+function platformText(platform) {
+  return { youtube: "YouTube", bilibili: "bilibili", kugou: "酷狗音乐" }[platform] || "";
+}
 
-    const parts = url.pathname.split("/").filter(Boolean);
-    const listId = url.searchParams.get("list");
-    if (url.pathname === "/playlist" && listId) {
-      return { kind: "playlist", label: "视频列表", normalizedUrl: `https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}` };
-    }
-    if (url.pathname === "/watch" && listId) {
-      return { kind: "playlist", label: "视频列表", normalizedUrl: `https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}` };
-    }
-    if (url.pathname === "/watch" && url.searchParams.get("v")) {
-      return { kind: "video", label: "单个视频", normalizedUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(url.searchParams.get("v"))}` };
-    }
-    if (["shorts", "live", "embed"].includes(parts[0]) && parts[1]) {
-      return { kind: "video", label: "单个视频", normalizedUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(parts[1])}` };
-    }
-
-    const channelRoot = parts[0]?.startsWith("@")
-      ? [parts[0]]
-      : ["channel", "c", "user"].includes(parts[0]) && parts[1]
-        ? [parts[0], parts[1]]
-        : null;
-    if (channelRoot) {
-      return {
-        kind: "channel",
-        label: "公开频道",
-        normalizedUrl: `https://www.youtube.com/${channelRoot.join("/")}`,
-      };
-    }
-    return { kind: "unknown", label: "无法识别", normalizedUrl: raw.trim() };
-  } catch (_) {
-    return { kind: "unknown", label: "URL 无效", normalizedUrl: raw.trim() };
-  }
+function setMode(mode) {
+  document.querySelectorAll(".mode").forEach(label => {
+    const input = label.querySelector("input");
+    input.checked = input.value === mode;
+    label.classList.toggle("active", input.checked);
+  });
 }
 
 function updateDetected() {
-  detected = classifyYoutubeUrl(sourceUrl.value);
+  const previousPlatform = detected.platform;
+  detected = classifySourceUrl(sourceUrl.value);
+  if (detected.platform !== previousPlatform) {
+    useCookies.checked = Boolean(cookiePreferences[detected.platform]);
+  }
+  const kugou = detected.platform === "kugou";
+  document.querySelectorAll(".mode").forEach(label => {
+    const input = label.querySelector("input");
+    input.disabled = kugou && input.value === "video";
+    label.classList.toggle("disabled", input.disabled);
+    label.setAttribute("aria-disabled", String(input.disabled));
+  });
+  if (kugou) setMode("audio");
+  useCookies.disabled = !["youtube", "bilibili"].includes(detected.platform);
+  if (useCookies.disabled) useCookies.checked = false;
+  cookieLabel.textContent = kugou
+    ? "酷狗音乐使用 HTTP 直连，无需读取浏览器 Cookie"
+    : `使用${platformText(detected.platform) || "当前平台"}登录 Cookie（仅需登录时勾选）`;
   kindBadge.className = `badge ${detected.kind}`;
-  kindBadge.textContent = detected.label;
+  kindBadge.textContent = [platformText(detected.platform), detected.label].filter(Boolean).join(" · ");
   const hints = {
-    video: "将下载当前视频",
+    video: detected.platform === "bilibili" ? "有 p 参数时下载指定分 P；否则下载全部分 P" : "将下载当前视频",
     playlist: "将下载列表内全部公开视频",
     channel: "将读取频道页面的“专辑和单曲”并按专辑分类；其他上传单独归档",
-    unknown: "请打开 YouTube 视频、播放列表或公开频道",
+    favorites: "将下载这个收藏夹中当前可访问的全部视频；需要登录时勾选 Cookie",
+    collection: "将下载该合集 / 视频列表中的全部可访问视频",
+    shortlink: "将解析 bilibili 短链接，再按目标视频或集合下载",
+    song: "获取歌曲播放地址并下载为 MP3",
+    unknown: "支持 YouTube 视频 / 列表 / 频道、bilibili 视频 / 收藏夹 / 合集、酷狗歌曲 / 歌单",
   };
-  sourceHint.textContent = hints[detected.kind] || hints.unknown;
+  sourceHint.textContent = kugou && detected.kind === "playlist"
+    ? "将读取完整歌单，逐曲获取播放地址并下载为 MP3"
+    : hints[detected.kind] || hints.unknown;
   enqueueButton.disabled = detected.kind === "unknown" || !hostReady() || repairing;
-  channelTools.hidden = detected.kind !== "channel";
-  repairButton.disabled = detected.kind !== "channel" || !hostReady() || repairing;
+  const youtubeChannel = detected.platform === "youtube" && detected.kind === "channel";
+  channelTools.hidden = !youtubeChannel;
+  repairButton.disabled = !youtubeChannel || !hostReady() || repairing;
 }
 
 function selectedMode() {
+  if (detected.platform === "kugou") return "audio";
   return document.querySelector('input[name="mode"]:checked')?.value || "video";
 }
 
@@ -131,7 +124,7 @@ function statusText(status) {
 }
 
 function kindText(kind) {
-  return { video: "单视频", playlist: "列表", channel: "频道" }[kind] || "来源";
+  return { video: "视频", playlist: "列表", channel: "频道", favorites: "收藏夹", collection: "合集", shortlink: "短链接", song: "歌曲" }[kind] || "来源";
 }
 
 function renderQueue(items) {
@@ -140,7 +133,7 @@ function renderQueue(items) {
   if (!items.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = "队列为空。打开一个 YouTube 页面后即可加入。";
+    empty.textContent = "队列为空。打开支持的视频、收藏夹或歌单页面后即可加入。";
     queueElement.appendChild(empty);
     return;
   }
@@ -154,12 +147,13 @@ function renderQueue(items) {
     const speed = task.speed || "";
     const eta = task.eta ? ` · ETA ${task.eta}` : "";
     const error = task.error ? ` · ${task.error}` : "";
+    const taskPlatform = classifySourceUrl(task.url).platform;
 
     card.innerHTML = `
       <div class="task-top">
         <div style="min-width:0">
           <div class="task-title" title="${escapeHtml(title)}">${escapeHtml(title)}</div>
-          <div class="task-sub">${kindText(task.kind)} · ${task.mode === "audio" ? "MP3" : "MP4"}${currentCount}</div>
+          <div class="task-sub">${platformText(taskPlatform)} · ${kindText(task.kind)} · ${task.mode === "audio" ? "MP3" : "MP4"}${currentCount}</div>
         </div>
         <span class="task-state ${task.status}">${statusText(task.status)}</span>
       </div>
@@ -181,7 +175,11 @@ function renderQueue(items) {
         const retry = document.createElement("button");
         retry.className = "ghost";
         retry.textContent = "重试";
-        retry.addEventListener("click", () => send({ type: "retry", taskId: task.id, useCookies: useCookies.checked }).catch((e) => setMessage(e.message, "error")));
+        retry.addEventListener("click", () => {
+          const payload = { type: "retry", taskId: task.id };
+          if (taskPlatform === detected.platform) payload.useCookies = useCookies.checked;
+          send(payload).catch(e => setMessage(e.message, "error"));
+        });
         actions.appendChild(retry);
       }
       const remove = document.createElement("button");
@@ -211,13 +209,24 @@ async function send(payload) {
 }
 
 document.getElementById("readTab").addEventListener("click", () => readCurrentTab().catch((e) => setMessage(e.message, "error")));
-sourceUrl.addEventListener("input", updateDetected);
+sourceUrl.addEventListener("input", () => {
+  currentTitle = "";
+  updateDetected();
+});
+useCookies.addEventListener("change", () => {
+  if (["youtube", "bilibili"].includes(detected.platform)) {
+    cookiePreferences[detected.platform] = useCookies.checked;
+  }
+});
 
 document.querySelectorAll(".mode").forEach((label) => {
-  label.addEventListener("click", () => {
-    document.querySelectorAll(".mode").forEach((item) => item.classList.remove("active"));
-    label.classList.add("active");
-    label.querySelector("input").checked = true;
+  label.addEventListener("click", event => {
+    const input = label.querySelector("input");
+    if (input.disabled) {
+      event.preventDefault();
+      return;
+    }
+    setMode(input.value);
   });
 });
 
@@ -235,7 +244,7 @@ enqueueButton.addEventListener("click", async () => {
       title: currentTitle,
       useCookies: useCookies.checked,
     });
-    const suffix = detected.kind === "channel" ? "；开始前会先整理已经下载的同频道文件。" : "。";
+    const suffix = detected.platform === "youtube" && detected.kind === "channel" ? "；开始前会先整理已经下载的同频道文件。" : "。";
     setMessage(`${detected.label} 已加入队列${suffix}`, "ok");
   } catch (error) {
     setMessage(error.message || String(error), "error");
@@ -246,7 +255,7 @@ enqueueButton.addEventListener("click", async () => {
 
 repairButton.addEventListener("click", async () => {
   updateDetected();
-  if (detected.kind !== "channel" || repairing) return;
+  if (detected.platform !== "youtube" || detected.kind !== "channel" || repairing) return;
   repairing = true;
   updateDetected();
   setMessage("正在读取频道页面的“专辑和单曲”并整理已下载文件；不会重新下载媒体…");

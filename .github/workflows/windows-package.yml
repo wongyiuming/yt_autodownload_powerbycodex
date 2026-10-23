@@ -35,7 +35,10 @@ jobs:
           python -m compileall -q native_host tools
           node --check extension/background.js
           node --check extension/popup.js
+          node --check extension/platform_urls.js
           node tools/test_extension_host_version.js
+          node tools/test_platform_urls.js
+          node tools/test_extension_platforms.js
 
       - name: Smoke test real channel album folders
         # External website behavior must not mask a passing offline regression suite.
@@ -77,6 +80,14 @@ jobs:
         shell: pwsh
         run: |
           & .\tools\smoke_windows_install.ps1
+
+      - name: Test frozen Kugou HTTP and MP3 pipeline on localhost
+        shell: pwsh
+        run: |
+          $result = (& .\dist\yt_autodownload_host.exe --smoke-local-kugou | ConvertFrom-Json)
+          if ($LASTEXITCODE -ne 0 -or -not $result.ok -or $result.backend -ne "httpx" -or -not $result.deduped) {
+            throw "Real HTTP + FFmpeg Kugou pipeline failed"
+          }
 
       - name: Probe YouTube metadata with frozen Host (informational)
         continue-on-error: true
