@@ -151,10 +151,10 @@ class NullPlaylistPageTests(unittest.TestCase):
                 self.assertNotIn(TOKEN, str(caught.exception))
                 self.assertEqual(caught.exception.diagnostic.public()["api_code"], code)
 
-    def test_null_compatibility_is_not_applied_to_unverified_track_endpoint(self):
+    def test_unknown_track_count_null_still_requires_rows(self):
         client, requests = self.client([page(None)])
         with self.assertRaises(KugouError) as caught:
-            client.resolve_playlist(KugouPlaylist("1", "Songs", 0, list_id="1"))
+            client.resolve_playlist(KugouPlaylist("1", "Songs", None, list_id="1"))
         self.assertEqual(requests[0].url.path, "/v4/get_list_all_file")
         self.assertEqual(caught.exception.diagnostic.public()["check"], "rows")
 

@@ -9,7 +9,7 @@ the ordinary public playback endpoints. No yt-dlp or browser runtime is used.
 from __future__ import annotations
 
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 from html import unescape
 import json
@@ -87,25 +87,65 @@ def _js_json(document: str, name: str):
         raise KugouError(f"酷狗页面的 {name} 格式已变化") from exc
 
 
-def _track(row: dict) -> KugouTrack:
+def _track_fields(row: dict) -> dict:
+    """One wire-field vocabulary for single pages, public and account lists.
+
+    Keep the exact resource identity; never match a different recording by title.
+    Missing optional identifiers stay empty rather than becoming "None"/"False".
+    """
     if not isinstance(row, dict):
         raise KugouError("酷狗歌单包含无效的歌曲记录")
-    song_hash = str(row.get("hash") or row.get("HASH") or row.get("FileHash") or "").upper()
-    mixsongid = str(row.get("mixsongid") or row.get("album_audio_id") or row.get("add_mixsongid") or "")
+
+    def first(*names, default=""):
+        return next((row[n] for n in names if row.get(n) is not None and row[n] != ""), default)
+
+    def number(*names):
+        value = first(*names)
+        if value == "":
+            return ""
+        if isinstance(value, bool) or not re.fullmatch(r"[0-9]{1,20}", str(value)):
+            raise KugouError("酷狗歌曲标识格式无效，未尝试播放接口")
+        return str(value)
+
+    milliseconds = first("timelen", "timelength", "duration_ms", default=None)
+    if milliseconds is None:
+        duration = first("duration", "Duration", default=None)
+        if isinstance(duration, (int, float)) and not isinstance(duration, bool):
+            milliseconds = duration * 1000 if duration < 10000 else duration
+    return {
+        "hash": str(first("hash", "HASH", "FileHash", "filehash", "Hash")).upper(),
+        "album_id": number("album_id", "AlbumID", "albumid"),
+        "mixsongid": number("mixsongid", "album_audio_id", "add_mixsongid", "MixSongID", "AlbumAudioID"),
+        "name": first("songname", "song_name", "audio_name", "SongName", "name", "filename"),
+        "author_name": first("author_name", "singername", "SingerName"),
+        "singerinfo": row.get("singerinfo") if isinstance(row.get("singerinfo"), list) else [],
+        "timelen": milliseconds,
+    }
+
+
+def _track(row: dict) -> KugouTrack:
+    normalized = _track_fields(row)
+    song_hash = normalized["hash"]
     if not _HASH.fullmatch(song_hash):
         raise KugouError("酷狗歌曲缺少有效的文件 hash，无法可靠下载")
-    artist = str(row.get("author_name") or row.get("singername") or "")
+    artist = str(normalized["author_name"])
     if not artist:
-        artist = "、".join(str(s.get("name") or "") for s in row.get("singerinfo", []) if isinstance(s, dict))
-    title = str(row.get("songname") or row.get("song_name") or row.get("audio_name") or row.get("name") or row.get("filename") or song_hash)
+        artist = "、".join(str(s.get("name") or "") for s in normalized["singerinfo"] if isinstance(s, dict))
+    title = str(normalized["name"] or song_hash)
     if artist and not title.startswith(artist + " - "):
         title = f"{artist} - {title}"
-    milliseconds = _positive_number(row.get("timelen") or row.get("timelength") or row.get("duration"))
+    milliseconds = _positive_number(normalized["timelen"])
+    album_id, mixsongid = normalized["album_id"], normalized["mixsongid"]
+    url = f"https://www.kugou.com/song/#hash={song_hash}"
+    if album_id:
+        url += f"&album_id={album_id}"
+    if mixsongid:
+        url += f"&album_audio_id={mixsongid}"
     return KugouTrack(
-        id=song_hash, hash=song_hash, album_id=str(row.get("album_id") or ""),
+        id=song_hash, hash=song_hash, album_id=album_id,
         title=unescape(title), artist=unescape(artist),
         duration=milliseconds / 1000 if milliseconds else None,
-        mixsongid=mixsongid, url=str(row.get("song_url") or ""),
+        mixsongid=mixsongid, url=url,
     )
 
 
@@ -191,10 +231,25 @@ class KugouClient:
                 if not isinstance(rows, list) or len(rows) != 1:
                     raise KugouError("酷狗单曲页面没有返回一首有效歌曲")
                 track = _track(rows[0])
+                hints = parse_qs(urlsplit(source.url).query)
+                # Explicit URL identifiers can fill missing page metadata, but
+                # must not silently select another recording/edition.
+                updates = {}
+                for key, attr in (("hash", "hash"), ("album_id", "album_id"), ("album_audio_id", "mixsongid")):
+                    hint = (hints.get(key) or [""])[0]
+                    value = getattr(track, attr)
+                    if hint and hint != "0":
+                        if value and value != "0" and value != hint:
+                            raise KugouError("酷狗单曲链接与页面的歌曲标识不一致，未请求播放地址")
+                        updates[attr] = hint
+                if updates:
+                    track = replace(track, **updates)
             else:
                 query = parse_qs(urlsplit(source.url).fragment)
                 song_hash = query["hash"][0]
-                track = KugouTrack(id=song_hash, hash=song_hash, album_id=(query.get("album_id") or [""])[0])
+                track = KugouTrack(id=song_hash, hash=song_hash,
+                                   album_id=(query.get("album_id") or [""])[0],
+                                   mixsongid=(query.get("album_audio_id") or [""])[0], url=source.url)
             return KugouCollection(track.id, track.title or "酷狗单曲", [track])
 
         collection_id = urlsplit(source.url).path.rsplit("/", 1)[-1].removesuffix(".html")
@@ -290,6 +345,7 @@ class KugouClient:
             ("https://m.kugou.com/app/i/getSongInfo.php", {"cmd": "playInfo", "hash": track.hash}, True),
             ("https://wwwapi.kugou.com/yy/index.php", {
                 "r": "play/getdata", "hash": track.hash, "album_id": track.album_id or "0", "mid": self._mid,
+                **({"album_audio_id": track.mixsongid} if track.mixsongid else {}),
             }, False),
         ]
         failures = []
@@ -299,8 +355,10 @@ class KugouClient:
                 payload = self._json(url, params=params, check_cancelled=check_cancelled)
                 return self._media(payload, track, mobile=mobile)
             except KugouError as exc:
-                failures.append(str(exc))
-        raise KugouError("；".join(dict.fromkeys(failures)))
+                label = "移动端匿名接口" if mobile else "网页匿名接口"
+                failures.append(f"{label}：{exc}")
+        raise KugouError("播放地址解析失败（以下为接口响应，不是当前账号权益结论）："
+                         + "；".join(dict.fromkeys(failures)))
 
     def download(self, media: KugouMedia, destination: Path, *,
                  progress: Callable[[dict], None] | None = None, check_cancelled=_NOOP) -> Path:

@@ -128,7 +128,21 @@ whole collection even when the page's query includes a currently playing bvid.
     if host in {"kugou.com", "www.kugou.com", "m.kugou.com"}:
         mixsong = re.fullmatch(r"/mixsong/([A-Za-z0-9]+)\.html", path)
         if mixsong:
-            return Source("kugou", "song", f"https://www.kugou.com/mixsong/{mixsong[1]}.html")
+            hints = {**query, **parse_qs(parsed.fragment, keep_blank_values=True)}
+            params = {}
+            for key, pattern in (("hash", r"[A-Fa-f0-9]{32}"), ("album_id", r"[0-9]{1,20}")):
+                value = _first(hints, key)
+                if value:
+                    if not re.fullmatch(pattern, value):
+                        raise ValueError("酷狗单曲链接的歌曲标识无效")
+                    params[key] = value.upper() if key == "hash" else value
+            audio_ids = {_first(hints, key) for key in ("album_audio_id", "mixsongid") if _first(hints, key)}
+            if len(audio_ids) > 1 or any(not re.fullmatch(r"[0-9]{1,20}", value) for value in audio_ids):
+                raise ValueError("酷狗歌曲标识无效或相互冲突")
+            if audio_ids:
+                params["album_audio_id"] = next(iter(audio_ids))
+            suffix = "?" + urlencode(params) if params else ""
+            return Source("kugou", "song", f"https://www.kugou.com/mixsong/{mixsong[1]}.html" + suffix)
         special = re.fullmatch(r"/yy/special/single/([^/]+)\.html", path)
         mobile = re.fullmatch(r"/plist/list/([1-9][0-9]*)", path) if host == "m.kugou.com" else None
         collection_id = special[1] if special else mobile[1] if mobile else ""
@@ -144,6 +158,12 @@ whole collection even when the page's query includes a currently playing bvid.
                 params = {"hash": song_hash.upper()}
                 if album_id:
                     params["album_id"] = album_id
+                audio_ids = {_first(song_query, key) for key in ("album_audio_id", "mixsongid")
+                             if _first(song_query, key)}
+                if len(audio_ids) > 1 or any(not re.fullmatch(r"[0-9]{1,20}", value) for value in audio_ids):
+                    raise ValueError("酷狗歌曲标识无效或相互冲突")
+                if audio_ids:
+                    params["album_audio_id"] = next(iter(audio_ids))
                 return Source("kugou", "song", "https://www.kugou.com/song/#" + urlencode(params))
         # An invalid single-song/playlist URL must not select the whole account.
         if re.search(r"%(?![A-Fa-f0-9]{2})", path):

@@ -21,14 +21,14 @@ from urllib.parse import unquote
 
 import httpx
 
-from kugou import KugouClient, KugouCollection, KugouError, KugouTrack, _NOOP, _track
+from kugou import KugouClient, KugouCollection, KugouError, KugouTrack, _NOOP, _track, _track_fields
 from kugou_diagnostics import Diagnostic, Failure, KugouDiagnosticError, response_shape
 
 
 _GATEWAY = "https://gateway.kugou.com"
 _LISTS_PATH = "/v7/get_all_list"
 _TRACKS_PATH = "/v4/get_list_all_file"
-# Public H5 request checksum seed, not an account credential or media key.
+# Public H5 request checksum seed, not an account credential or a media key.
 _H5_SIGN_SEED = "NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt"
 _POSITIVE_ID = re.compile(r"[1-9][0-9]{0,19}\Z")
 _GLOBAL_ID = re.compile(r"collection_[0-9]+_[0-9]+_([1-9][0-9]*)_[0-9]+\Z")
@@ -173,20 +173,7 @@ def _row_id(row: dict) -> str:
 def _library_track(row: dict, *, position: int) -> KugouTrack:
     if not isinstance(row, dict):
         raise KugouError("酷狗个人歌单包含无效的歌曲记录")
-    normalized = {
-        "hash": _first(row, "hash", "HASH", "FileHash", "filehash", "Hash"),
-        "album_id": _first(row, "album_id", "AlbumID"),
-        "mixsongid": _first(row, "mixsongid", "album_audio_id", "add_mixsongid", "MixSongID", "AlbumAudioID"),
-        "name": _first(row, "songname", "song_name", "audio_name", "SongName", "name", "filename"),
-        "author_name": _first(row, "author_name", "singername", "SingerName"),
-        "singerinfo": row.get("singerinfo") if isinstance(row.get("singerinfo"), list) else [],
-    }
-    milliseconds = _first(row, "timelen", "timelength", "duration_ms", default=None)
-    if milliseconds is None:
-        seconds = _first(row, "duration", "Duration", default=None)
-        if isinstance(seconds, (int, float)) and not isinstance(seconds, bool):
-            milliseconds = seconds * 1000 if seconds < 10000 else seconds
-    normalized["timelen"] = milliseconds
+    normalized = _track_fields(row)
     song_hash = str(normalized["hash"]).upper()
     if not re.fullmatch(r"[A-F0-9]{32}", song_hash):
         # Keep unavailable/cloud-only records in their original position. The
@@ -194,13 +181,8 @@ def _library_track(row: dict, *, position: int) -> KugouTrack:
         # continue the rest of the playlist, rather than discarding the list.
         return KugouTrack(id=f"unavailable:{position}", title=unescape(str(normalized["name"] or "不可用歌曲")),
                           artist=unescape(str(normalized["author_name"] or "")))
-    track = _track(normalized)
-    return KugouTrack(
-        id=track.id, hash=track.hash, album_id=track.album_id, title=track.title,
-        artist=track.artist, duration=track.duration, mixsongid=track.mixsongid,
-        url=f"https://www.kugou.com/song/#hash={track.hash}"
-        + (f"&album_id={track.album_id}" if _integer(track.album_id) is not None else ""),
-    )
+    return _track(normalized)
+
 
 
 class KugouLibraryClient(KugouClient):
@@ -309,13 +291,21 @@ class KugouLibraryClient(KugouClient):
                                       check_cancelled=check_cancelled)
             row_fields = ("info", "songs", "lists", "list", "items", "file")
             rows = _first(data, *row_fields, default=None)
-            # get_all_list can represent its terminal empty page as info:null
-            # (observed in a successful page-2 response). Normalize only this
-            # explicit field, not missing fields, other types or track APIs.
-            # A real alternative array still takes precedence over null info;
-            # a malformed alternative must not become a successful empty page.
-            if (path == _LISTS_PATH and "info" in data and data["info"] is None
-                    and not any(key in data for key in row_fields[1:])):
+            # An explicit null is not the same as a missing or malformed field.
+            # Empty track lists additionally need a known zero preview count or
+            # zero response total. Every present total must agree; the normal
+            # page/version/has_more checks below still apply.
+            no_alternatives = not any(key in data for key in row_fields[1:])
+            null_info = "info" in data and data["info"] is None and no_alternatives
+            totals = [data[key] for key in ("total", "total_count", "count") if key in data]
+            known_empty_tracks = (path == _TRACKS_PATH
+                                  and ((type(expected_count) is int and expected_count == 0) or bool(totals))
+                                  and all(_integer(value) == 0 for value in totals))
+            info = data.get("info")
+            null_file = (isinstance(info, dict) and "file" in info
+                         and info["file"] is None and no_alternatives)
+            if ((path == _LISTS_PATH and null_info)
+                    or (known_empty_tracks and (null_info or null_file))):
                 rows = []
             # Do not return here: empty/null pages must still pass page, total,
             # revision and has_more checks before the accumulated result wins.

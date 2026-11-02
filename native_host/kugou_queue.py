@@ -243,12 +243,13 @@ def download_kugou(manager, task, cancelled_error_cls, *, client=None) -> None:
                     existing = _existing_file(root, archive.get(track.id))
                     # Public collections retain their existing archive behavior.
                     # An account library also materializes every playlist's copy.
-                    if existing and not personal_library:
+                    if existing and not personal_library and source.kind != "song":
                         update(progress=index / item_count * 100)
                         continue
                     filename = f"{track_index:03d} - {safe_name(title, limit=100)} [{safe_name(track.id, limit=40)}].mp3"
                     target = folder / filename
                     if existing:
+                        update(current_title=f"复用已下载文件：{display_title}")
                         _materialize(existing, target, check_cancelled)
                     else:
                         media = active_client.resolve_track(track, check_cancelled=check_cancelled)

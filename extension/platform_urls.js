@@ -91,7 +91,22 @@ function classifySourceUrl(raw) {
     }
     if (["kugou.com", "www.kugou.com", "m.kugou.com"].includes(host)) {
       const mixsong = path.match(/^\/mixsong\/([A-Za-z0-9]+)\.html$/);
-      if (mixsong) return source("kugou", "song", `https://www.kugou.com/mixsong/${mixsong[1]}.html`);
+      if (mixsong) {
+        const fragment = new URLSearchParams(url.hash.slice(1));
+        const hint = (key) => fragment.has(key) ? fragment.get(key) : q.get(key);
+        const params = new URLSearchParams();
+        for (const [key, pattern] of [["hash", /^[A-Fa-f0-9]{32}$/], ["album_id", /^[0-9]{1,20}$/]]) {
+          const value = hint(key);
+          if (value) {
+            if (!pattern.test(value)) return unknown("歌曲标识无效");
+            params.set(key, key === "hash" ? value.toUpperCase() : value);
+          }
+        }
+        const audioIds = [...new Set([hint("album_audio_id"), hint("mixsongid")].filter(Boolean))];
+        if (audioIds.length > 1 || audioIds.some((id) => !/^[0-9]{1,20}$/.test(id))) return unknown("歌曲标识无效或相互冲突");
+        if (audioIds.length) params.set("album_audio_id", audioIds[0]);
+        return source("kugou", "song", `https://www.kugou.com/mixsong/${mixsong[1]}.html${params.size ? `?${params}` : ""}`);
+      }
       const special = path.match(/^\/yy\/special\/single\/([^/]+)\.html$/);
       const mobile = host === "m.kugou.com" ? path.match(/^\/plist\/list\/([1-9][0-9]*)$/) : null;
       const id = special?.[1] || mobile?.[1] || "";
@@ -103,7 +118,12 @@ function classifySourceUrl(raw) {
         const songHash = fragment.has("hash") ? fragment.get("hash") : q.get("hash");
         const albumId = fragment.has("album_id") ? fragment.get("album_id") : q.get("album_id");
         if (/^[A-Fa-f0-9]{32}$/.test(songHash || "") && (!albumId || /^[0-9]+$/.test(albumId))) {
-          return source("kugou", "song", `https://www.kugou.com/song/#hash=${songHash.toUpperCase()}${albumId ? `&album_id=${albumId}` : ""}`);
+          const audioIds = [...new Set(["album_audio_id", "mixsongid"].map((key) =>
+            fragment.has(key) ? fragment.get(key) : q.get(key)).filter(Boolean))];
+          if (audioIds.length > 1 || audioIds.some((id) => !/^[0-9]{1,20}$/.test(id))) {
+            return unknown("歌曲标识无效或相互冲突");
+          }
+          return source("kugou", "song", `https://www.kugou.com/song/#hash=${songHash.toUpperCase()}${albumId ? `&album_id=${albumId}` : ""}${audioIds.length ? `&album_audio_id=${audioIds[0]}` : ""}`);
         }
       }
       // A malformed individual resource must not expand into the whole account.
