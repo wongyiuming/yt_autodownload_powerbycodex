@@ -262,7 +262,7 @@ class PersonalLibraryQueueTests(unittest.TestCase):
             self.run_download(task, client)
         self.assertEqual(target.read_bytes(), b"user-file-must-not-be-overwritten")
         self.assertEqual(client.download.call_count, 1)
-        archived = json.loads((self.audio_root / "archive-audio.json").read_text())
+        archived = json.loads((self.audio_root / "archive-audio.json").read_text(encoding="utf-8"))
         self.assertEqual((self.audio_root / archived[HASH_A]).read_bytes(), b"ID3Shared")
 
     def test_empty_library_succeeds_without_media_requests(self):
@@ -293,7 +293,7 @@ class PersonalLibraryQueueTests(unittest.TestCase):
         self.assertEqual(client.resolve_playlist.call_count, 3)
         self.assertEqual(client.resolve_track.call_count, 3)
         self.assertEqual(client.download.call_count, 2)
-        archive = json.loads((self.audio_root / "archive-audio.json").read_text())
+        archive = json.loads((self.audio_root / "archive-audio.json").read_text(encoding="utf-8"))
         self.assertEqual(set(archive), {HASH_B, HASH_C})
         self.assertLess(task.progress, 100)
 
