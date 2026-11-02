@@ -16,6 +16,7 @@ import time
 import uuid
 
 from kugou import KugouError
+from kugou_diagnostics import Diagnostic, Failure, public_diagnostic, internal_diagnostic
 from kugou_library import KugouAuthError, KugouLibraryClient, KugouPlaylist, KugouSession
 from kugou_plan import MAX_PLAYLISTS, playlist_plan
 
@@ -47,6 +48,7 @@ class _Preview:
     known_track_count: int = 0
     unknown_track_count: int = 0
     error: str = ""
+    diagnostic: dict = field(default_factory=dict)
 
 
 def _normalize_playlist(playlist: KugouPlaylist, token: str) -> KugouPlaylist:
@@ -176,7 +178,7 @@ class KugouPreviewStore:
                           for entry in entries],
             "offset": offset,
             "next_offset": next_offset if record.status == "ready" and next_offset < record.playlist_count else None,
-            "error": record.error,
+            "error": record.error, "diagnostic": dict(record.diagnostic),
         }
 
     def _check_active(self, record: _Preview) -> None:
@@ -242,17 +244,22 @@ class KugouPreviewStore:
         except Exception as error:
             # Even supposedly safe API exceptions can originate from injected
             # clients. Never expose exception text, repr, URLs or tracebacks.
-            if isinstance(error, KugouAuthError):
+            diagnostic = public_diagnostic(error)
+            if diagnostic is not None:
+                message = Diagnostic.message(diagnostic)
+            elif isinstance(error, KugouAuthError):
                 message = "当前网页登录会话未通过酷狗歌单接口验证，请刷新当前页面后重新读取"
             elif isinstance(error, KugouPreviewError):
                 message = "酷狗歌单预览数据无效或超出支持范围，请重新读取"
             else:
-                message = "酷狗歌单接口请求失败，请检查网络后重新读取"
+                diagnostic = Diagnostic(Failure.SCHEMA) if isinstance(error, KugouError) else internal_diagnostic(error)
+                message = Diagnostic.message(diagnostic)
             with self._condition:
                 self._expire_locked()
                 if self._records.get(record.id) is record and record.status == "loading" and not self._closed:
                     record.status = "error"
                     record.error = message
+                    record.diagnostic = Diagnostic.public(diagnostic) if diagnostic is not None else {}
                     record.playlists = ()
                     record.session = None
         finally:

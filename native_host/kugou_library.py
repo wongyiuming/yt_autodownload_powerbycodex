@@ -9,17 +9,20 @@ The H5 signing format and cookie fields match Kugou's ``infSign.min.js`` and
 from __future__ import annotations
 
 from contextlib import closing
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 from html import unescape
 import json
 import re
+import socket
+import ssl
 import time
 from urllib.parse import unquote
 
 import httpx
 
 from kugou import KugouClient, KugouCollection, KugouError, KugouTrack, _NOOP, _track
+from kugou_diagnostics import Diagnostic, Failure, KugouDiagnosticError, response_shape
 
 
 _GATEWAY = "https://gateway.kugou.com"
@@ -208,11 +211,22 @@ class KugouLibraryClient(KugouClient):
             raise KugouAuthError("酷狗登录会话已结束，请在酷狗主站重新读取个人歌单")
         super().__init__(client)
         self._session = session
+        self._diagnostic = Diagnostic(Failure.INTERNAL)
+
+    def _failure(self, message, code, check="", *, auth=False):
+        diagnostic = replace(self._diagnostic, code=code, check=check)
+        if auth:
+            error = KugouAuthError(message)
+            error.diagnostic = diagnostic
+            return error
+        return KugouDiagnosticError(message, diagnostic)
 
     def _private_json(self, path: str, body: dict, *, check_cancelled=_NOOP) -> dict:
         if path not in {_LISTS_PATH, _TRACKS_PATH}:
             raise KugouError("不支持的酷狗个人歌单请求")
         check_cancelled()
+        stage = "playlist_list" if path == _LISTS_PATH else "playlist_tracks"
+        self._diagnostic = Diagnostic(Failure.INTERNAL, stage, _integer(body.get("page")))
         session = self._session
         timestamp = str(int(time.time() * 1000))
         params = {
@@ -227,39 +241,60 @@ class KugouLibraryClient(KugouClient):
         # defaults from an injected client. Only this fixed HTTPS host receives
         # the token, and even same-host redirects are rejected.
         request = httpx.Request("POST", _GATEWAY + path, params=params, content=encoded.encode(), headers={
-            "User-Agent": "Mozilla/5.0", "Referer": "https://www.kugou.com/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.kugou.com/", "Accept": "application/json",
             "Content-Type": "application/json", "x-router": "cloudlist.service.kugou.com",
         })
         try:
             response = self.client.send(request, auth=None, follow_redirects=False)
-        except httpx.HTTPError:
-            # Never chain an exception whose request URL contains the token:
-            # the host includes tracebacks in diagnostic messages.
-            raise KugouError("酷狗个人歌单连接失败，请检查网络或稍后重试") from None
+        except httpx.HTTPError as error:
+            # Classify by type, not str(error): request URLs can contain tokens.
+            code = (Failure.TIMEOUT if isinstance(error, httpx.TimeoutException) else
+                    Failure.PROXY if isinstance(error, httpx.ProxyError) else
+                    Failure.CONNECT if isinstance(error, httpx.ConnectError) else Failure.TRANSPORT)
+            if code == Failure.CONNECT:
+                cause = error
+                for _ in range(8):
+                    if isinstance(cause, ssl.SSLError):
+                        code = Failure.TLS
+                        break
+                    if isinstance(cause, socket.gaierror):
+                        code = Failure.DNS
+                        break
+                    cause = cause.__cause__ or cause.__context__
+                    if cause is None:
+                        break
+            raise self._failure("酷狗个人歌单连接失败，请检查网络或稍后重试", code) from None
         with closing(response):
             check_cancelled()
+            self._diagnostic = replace(self._diagnostic, http_status=response.status_code)
+            if response.headers.get("ssa-code"):
+                raise self._failure("酷狗接口要求安全验证，请在官网处理", Failure.VERIFY)
             if response.is_redirect:
-                raise KugouError("酷狗个人歌单接口发生重定向，已停止发送登录信息")
+                raise self._failure("酷狗个人歌单接口发生重定向，已停止发送登录信息", Failure.REDIRECT)
             if response.status_code == 401:
-                raise KugouAuthError("酷狗登录已失效，请在酷狗主站重新登录后重试")
+                raise self._failure("酷狗会话未通过接口验证", Failure.AUTH, auth=True)
             if response.status_code != 200:
-                raise KugouError(f"酷狗个人歌单接口 HTTP {response.status_code}，请稍后重试")
+                raise self._failure(f"酷狗个人歌单接口 HTTP {response.status_code}，请稍后重试", Failure.HTTP)
             try:
                 payload = response.json()
             except ValueError:
-                raise KugouError("酷狗个人歌单接口未返回有效 JSON，请稍后重试") from None
+                raise self._failure("酷狗个人歌单接口未返回有效 JSON，请稍后重试", Failure.JSON) from None
         if not isinstance(payload, dict):
-            raise KugouError("酷狗个人歌单接口返回了无效的数据结构")
+            raise self._failure("酷狗个人歌单接口返回了无效的数据结构", Failure.SCHEMA, "body")
         raw_code = payload.get("error_code", payload.get("errcode"))
-        code = _integer(raw_code)
+        code = int(raw_code) if type(raw_code) in {int, str} and re.fullmatch(r"-?[0-9]{1,8}", str(raw_code)) else None
+        self._diagnostic = replace(self._diagnostic, api_code=code, shape=response_shape(payload.get("data")))
         if code == 20010:
-            raise KugouAuthError("酷狗登录已失效或未获授权（20010），请在酷狗主站重新登录后重试")
+            raise self._failure("酷狗登录会话未获接口授权（20010），请在酷狗主站重新登录后重试", Failure.AUTH, auth=True)
         if str(payload.get("status")) != "1" or (raw_code is not None and str(raw_code) != "0"):
             suffix = f"（错误码 {code}）" if code is not None else ""
-            raise KugouError(f"酷狗个人歌单读取失败{suffix}，请重新登录或稍后重试")
+            raise self._failure(f"酷狗个人歌单读取失败{suffix}，请重新登录或稍后重试", Failure.API)
         data = payload.get("data")
         if not isinstance(data, dict):
-            raise KugouError("酷狗个人歌单接口缺少有效的数据")
+            raise self._failure("酷狗个人歌单接口缺少有效的数据", Failure.SCHEMA, "body")
+        if "userid" in data and str(data["userid"]) != session.user_id:
+            raise self._failure("酷狗接口返回的账号与当前会话不同", Failure.SCHEMA, "user_id")
         return data
 
     def _pages(self, path: str, body: dict, *, check_cancelled=_NOOP, expected_count=None):
@@ -272,36 +307,38 @@ class KugouLibraryClient(KugouClient):
             check_cancelled()
             data = self._private_json(path, {**body, "page": page, "pagesize": self.page_size},
                                       check_cancelled=check_cancelled)
-            rows = _first(data, "info", "songs", "lists", "file", default=None)
+            rows = _first(data, "info", "songs", "lists", "list", "items", "file", default=None)
             if isinstance(rows, dict):
                 rows = rows.get("file")
             if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
-                raise KugouError("酷狗个人歌单分页缺少有效记录，无法确认完整性")
+                raise self._failure("酷狗个人歌单分页缺少有效记录，无法确认完整性", Failure.SCHEMA, "rows")
             if data.get("page") is not None and _integer(data["page"]) != page:
-                raise KugouError("酷狗个人歌单返回了错误的分页，未完成全部读取")
+                raise self._failure("酷狗个人歌单返回了错误的分页，未完成全部读取", Failure.PAGE, "page")
 
             # Service variants differ in whether totals/end flags are exposed.
             # Without either marker, keep requesting pages until an empty page;
             # neither a short page nor the initial library's m_count is a stop.
             current_key = next((key for key in ("total", "total_count", "count") if key in data), None)
+            # list_count/collect_count/album_count are category metadata, not
+            # an authoritative total for info. Do not add them or stop on them.
             if page == 1:
                 total_key = current_key
             elif current_key != total_key:
-                raise KugouError("酷狗个人歌单分页总数字段发生变化，无法确认完整性")
+                raise self._failure("酷狗个人歌单分页总数字段发生变化，无法确认完整性", Failure.PAGE, "total")
             count = _integer(data[current_key]) if current_key else None
             if current_key and count is None:
-                raise KugouError("酷狗个人歌单分页总数无效，无法确认完整性")
+                raise self._failure("酷狗个人歌单分页总数无效，无法确认完整性", Failure.PAGE, "total")
             if count is not None:
                 if ((declared_total is not None and declared_total != count)
                         or (expected_count is not None and expected_count != count)):
-                    raise KugouError("酷狗个人歌单在读取期间发生变化，请重新读取")
+                    raise self._failure("酷狗个人歌单在读取期间发生变化，请重新读取", Failure.CHANGED, "version")
                 declared_total = count
             more_key = next((key for key in ("has_more", "hasmore") if key in data), None)
             more = None
             if more_key:
                 value = data[more_key]
                 if type(value) not in {int, str, bool} or value not in (0, 1, "0", "1", False, True):
-                    raise KugouError("酷狗个人歌单分页结束标记无效")
+                    raise self._failure("酷狗个人歌单分页结束标记无效", Failure.PAGE, "end")
                 more = str(value).lower() in {"1", "true"}
             limit = declared_total if declared_total is not None else expected_count
             version = data.get("total_ver")
@@ -309,32 +346,32 @@ class KugouLibraryClient(KugouClient):
                 if initial_version is None:
                     initial_version = str(version)
                 elif str(version) != initial_version:
-                    raise KugouError("酷狗个人歌单在读取期间发生变化，请重新读取")
+                    raise self._failure("酷狗个人歌单在读取期间发生变化，请重新读取", Failure.CHANGED, "version")
 
             # Fingerprint full records so malformed pages cannot be hidden by
             # song-hash deduplication. Hashing also avoids retaining raw bodies.
             fingerprint = hashlib.sha256(json.dumps(rows, sort_keys=True, ensure_ascii=False,
                                                      separators=(",", ":")).encode()).hexdigest()
             if rows and fingerprint in seen_pages:
-                raise KugouError("酷狗个人歌单接口重复返回同一页，未完成全部读取")
+                raise self._failure("酷狗个人歌单接口重复返回同一页，未完成全部读取", Failure.REPEAT, "duplicate")
             seen_pages.add(fingerprint)
             consumed += len(rows)
             if limit is not None and consumed > limit:
-                raise KugouError("酷狗个人歌单记录数量超过接口总数，无法确认完整性")
+                raise self._failure("酷狗个人歌单记录数量超过接口总数，无法确认完整性", Failure.PAGE, "total")
             if limit is not None and more is False and consumed != limit:
-                raise KugouError("酷狗个人歌单提前结束，未完成全部读取")
+                raise self._failure("酷狗个人歌单提前结束，未完成全部读取", Failure.PAGE, "end")
             if limit is not None and consumed == limit and more is True:
-                raise KugouError("酷狗个人歌单总数与结束标记冲突，无法确认完整性")
+                raise self._failure("酷狗个人歌单总数与结束标记冲突，无法确认完整性", Failure.PAGE, "end")
             if (declared_total is not None and consumed == declared_total) or more is False:
                 yield rows
                 return
             if not rows:
                 if more is True or (limit is not None and consumed != limit):
-                    raise KugouError("酷狗个人歌单提前结束，未完成全部读取")
+                    raise self._failure("酷狗个人歌单提前结束，未完成全部读取", Failure.PAGE, "end")
                 yield rows
                 return
             yield rows
-        raise KugouError("酷狗个人歌单超过分页安全上限，未完成全部读取")
+        raise self._failure("酷狗个人歌单超过分页安全上限，未完成全部读取", Failure.LIMIT, "page")
 
     def list_playlists(self, *, check_cancelled=_NOOP) -> list[KugouPlaylist]:
         session = self._session
@@ -350,13 +387,16 @@ class KugouLibraryClient(KugouClient):
                 # list_ver=2 identifies albums, not personal song playlists.
                 if str(row.get("list_ver")) == "2":
                     continue
-                list_id = _row_id(row)
+                try:
+                    list_id = _row_id(row)
+                except KugouError:
+                    raise self._failure("酷狗个人歌单缺少有效的云歌单 ID，无法确认完整性", Failure.ROW, "list_id") from None
                 list_type = _integer(_first(row, "type", "list_type", default=0))
                 if list_type not in {0, 1}:
-                    raise KugouError("酷狗个人歌单返回了不支持的歌单类型")
+                    raise self._failure("酷狗个人歌单返回了不支持的歌单类型", Failure.ROW, "list_type")
                 entry_key = (list_type, list_id)
                 if entry_key in seen_ids:
-                    raise KugouError("酷狗个人歌单分页出现重复的歌单，可能在读取期间发生变化")
+                    raise self._failure("酷狗个人歌单分页出现重复的歌单，可能在读取期间发生变化", Failure.REPEAT, "duplicate")
                 seen_ids.add(entry_key)
                 global_id = str(row.get("global_collection_id") or "")
                 canonical_id = global_id if _GLOBAL_ID.fullmatch(global_id) else list_id
@@ -367,7 +407,7 @@ class KugouLibraryClient(KugouClient):
                 count_value = _first(row, "count", "m_count", default=None)
                 count = _integer(count_value)
                 if count_value is not None and count is None:
-                    raise KugouError("酷狗个人歌单返回了无效的歌曲总数")
+                    raise self._failure("酷狗个人歌单返回了无效的歌曲总数", Failure.ROW, "track_count")
                 title = unescape(str(row.get("name") or row.get("title") or f"酷狗歌单 {list_id}"))
                 playlists.append(KugouPlaylist(canonical_id, title, count, url, list_id, list_type))
         return playlists
@@ -406,7 +446,7 @@ class KugouLibraryClient(KugouClient):
                 if not _POSITIVE_ID.fullmatch(file_id):
                     file_id = ""
                 if file_id and file_id in seen_files:
-                    raise KugouError("酷狗个人歌单分页出现重复歌曲记录，可能在读取期间发生变化")
+                    raise self._failure("酷狗个人歌单分页出现重复歌曲记录，可能在读取期间发生变化", Failure.REPEAT, "duplicate")
                 if file_id:
                     seen_files.add(file_id)
                 position += 1

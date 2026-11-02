@@ -81,3 +81,5 @@ input[type="url"]:focus { border-color: #6e7781; box-shadow: 0 0 0 2px rgba(9,10
 .auth-switch input { margin: 0; }
 footer { color: #8c959f; font-size: 10px; line-height: 1.4; padding: 0 2px 4px; }
 footer button { margin-top: 8px; }
+
+.library-diagnostic { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; user-select: text; }

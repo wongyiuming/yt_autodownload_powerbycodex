@@ -284,6 +284,31 @@ function safePlaylistUrl(raw) {
   return source.platform === "kugou" && source.kind === "playlist" ? source.normalizedUrl : "";
 }
 
+function safeKugouDiagnostic(data) {
+  const result = { version: expectedHostVersion };
+  const allowed = {
+    code: ["NETWORK_TIMEOUT", "NETWORK_PROXY", "NETWORK_CONNECT", "NETWORK_TLS", "NETWORK_DNS", "NETWORK_TRANSPORT", "HTTP_ERROR", "REDIRECT_BLOCKED", "SESSION_REJECTED", "API_REJECTED", "VERIFICATION_REQUIRED", "INVALID_JSON", "INVALID_RESPONSE", "PAGINATION_INVALID", "PAGINATION_CHANGED", "PAGINATION_REPEATED", "PAGINATION_LIMIT", "PLAYLIST_RECORD_INVALID", "INTERNAL_ERROR"],
+    stage: ["preview", "playlist_list", "playlist_tracks"],
+    endpoint: ["/v7/get_all_list", "/v4/get_list_all_file"],
+    check: ["rows", "total", "page", "end", "version", "duplicate", "list_id", "list_type", "track_count", "user_id", "body"],
+    exception_type: ["TypeError", "ValueError", "AttributeError", "KeyError", "RuntimeError", "OSError", "ImportError", "ModuleNotFoundError", "UnknownError"],
+    module: ["kugou_library.py", "kugou_preview.py", "kugou_plan.py", "kugou.py", "kugou_diagnostics.py"],
+  };
+  for (const [key, values] of Object.entries(allowed)) {
+    if (values.includes(data[key])) result[key] = data[key];
+  }
+  for (const [key, low, high] of [["page", 1, 1000], ["http_status", 100, 599], ["api_code", -99999999, 99999999], ["line", 1, 100000]]) {
+    if (Number.isSafeInteger(data[key]) && data[key] >= low && data[key] <= high) result[key] = data[key];
+  }
+  const shape = {};
+  for (const key of ["data", "info", "songs", "lists", "list", "items", "file", "total", "total_count", "count", "list_count", "collect_count", "album_count", "has_more", "hasmore", "page", "total_ver"]) {
+    const value = data.shape?.[key];
+    if (["object", "array", "string", "number", "boolean", "null"].includes(value)) shape[key] = value;
+  }
+  if (Object.keys(shape).length) result.shape = shape;
+  return result;
+}
+
 function renderLibraryPreview() {
   libraryPreviewElement.hidden = !libraryPreview;
   libraryPlaylistList.innerHTML = "";
@@ -304,6 +329,23 @@ function renderLibraryPreview() {
     const shown = preview.status === "ready" && preview.playlists.length < preview.playlist_count
       ? `；已展示 ${preview.playlists.length}/${preview.playlist_count}，请加载全部 URL 后确认` : "";
     libraryPreviewSummary.textContent = `账号 ${preview.user_id || "未知"} · ${preview.playlist_count || 0} 个歌单 · 已知 ${preview.known_track_count || 0} 首曲目${unknown}${shown}${preview.status === "consumed" ? "；已加入下载队列" : ""}`;
+  }
+  if (preview.status === "error" && preview.diagnostic && typeof preview.diagnostic === "object") {
+    const safe = safeKugouDiagnostic(preview.diagnostic);
+    const diagnostic = document.createElement("pre");
+    diagnostic.className = "library-diagnostic";
+    diagnostic.textContent = JSON.stringify(safe, null, 2);
+    libraryPlaylistList.appendChild(diagnostic);
+    const copy = document.createElement("button");
+    copy.className = "ghost";
+    copy.textContent = "复制脱敏诊断";
+    copy.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(diagnostic.textContent);
+        setMessage("脱敏诊断已复制，不包含 Cookie、token 或账号 ID。", "ok");
+      } catch (_) { setMessage("请选中诊断文本手动复制。", "error"); }
+    });
+    libraryPlaylistList.appendChild(copy);
   }
   for (const playlist of preview.playlists) {
     const card = document.createElement("div");
@@ -361,6 +403,11 @@ function applyLibraryPreviewPage(page, offset = 0) {
   if (libraryPreview.status === "ready" && libraryPreview.next_offset != null
       && libraryPreview.next_offset !== libraryPreview.playlists.length) {
     throw new Error("歌单分页不连续，请重新读取全部歌单。");
+  }
+  if (libraryPreview.status === "error" || libraryPreview.status === "cancelled") {
+    setMessage(libraryPreview.error || "歌单读取已停止，请重新读取。", "error");
+  } else if (libraryPreview.status === "ready") {
+    setMessage("歌单 URL 读取完成；确认后才会下载歌曲。", "ok");
   }
   renderLibraryPreview();
   updateDetected();
