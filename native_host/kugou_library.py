@@ -307,7 +307,18 @@ class KugouLibraryClient(KugouClient):
             check_cancelled()
             data = self._private_json(path, {**body, "page": page, "pagesize": self.page_size},
                                       check_cancelled=check_cancelled)
-            rows = _first(data, "info", "songs", "lists", "list", "items", "file", default=None)
+            row_fields = ("info", "songs", "lists", "list", "items", "file")
+            rows = _first(data, *row_fields, default=None)
+            # get_all_list can represent its terminal empty page as info:null
+            # (observed in a successful page-2 response). Normalize only this
+            # explicit field, not missing fields, other types or track APIs.
+            # A real alternative array still takes precedence over null info;
+            # a malformed alternative must not become a successful empty page.
+            if (path == _LISTS_PATH and "info" in data and data["info"] is None
+                    and not any(key in data for key in row_fields[1:])):
+                rows = []
+            # Do not return here: empty/null pages must still pass page, total,
+            # revision and has_more checks before the accumulated result wins.
             if isinstance(rows, dict):
                 rows = rows.get("file")
             if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
