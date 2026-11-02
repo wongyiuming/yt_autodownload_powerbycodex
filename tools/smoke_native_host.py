@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import struct
 import subprocess
 import sys
@@ -11,6 +12,12 @@ import sys
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("Usage: smoke_native_host.py <host-exe>")
+    # Read the expected version from the source checkout, independently of the
+    # installed executable under test. Keep version validation across upgrades.
+    source_manifest = Path(__file__).resolve().parents[1] / "extension" / "manifest.json"
+    expected_version = json.loads(source_manifest.read_text(encoding="utf-8"))["version"]
+    if not isinstance(expected_version, str) or not expected_version:
+        raise AssertionError("Source extension version is missing")
     request = json.dumps({"id": "smoke-hello", "action": "hello"}).encode("utf-8")
     wire = struct.pack("<I", len(request)) + request
     proc = subprocess.run(
@@ -34,8 +41,8 @@ def main() -> int:
     reply = next((m for m in messages if m.get("reply_to") == "smoke-hello"), None)
     if not hello or not reply or not reply.get("ok"):
         raise AssertionError(f"Native Messaging hello failed: {messages!r}")
-    if hello["host"]["version"] != "1.4.1" or reply["host"]["version"] != "1.4.1":
-        raise AssertionError(f"Wrong runtime version: {messages!r}")
+    if hello["host"]["version"] != expected_version or reply["host"]["version"] != expected_version:
+        raise AssertionError(f"Wrong runtime version (expected {expected_version}): {messages!r}")
     if not hello["host"].get("kugou_personal_library") or not reply["host"].get("kugou_personal_library"):
         raise AssertionError("Native Host is missing the Kugou personal library capability")
     if not hello["host"].get("kugou_playlist_preview") or not reply["host"].get("kugou_playlist_preview"):
