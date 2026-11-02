@@ -110,7 +110,7 @@ class EntryParityTests(unittest.TestCase):
                 CANONICAL.replace('=34', '=broken'),
                 f'https://www.kugou.com/song/#hash={HASH}&album_audio_id=9007199254740993']
         script = "const {classifySourceUrl:c}=require('./extension/platform_urls.js');const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync(0,'utf8')).map(c)));"
-        result = subprocess.run(['node', '-e', script], input=json.dumps(urls), text=True,
+        result = subprocess.run(['node', '-e', script], input=json.dumps(urls), text=True, encoding='utf-8',
                                 capture_output=True, check=True, cwd=ROOT, timeout=10)
         for url, js in zip(urls, json.loads(result.stdout)):
             try:
