@@ -6,6 +6,7 @@ import time
 import re
 
 import host_legacy
+from kugou_library import KugouAuthError, session_from_cookies
 from platform_urls import classify_source
 from youtube_runtime import (NonRetryableYoutubeError, download_with_fallback,
                              runtime_diagnostics, youtube_options)
@@ -24,9 +25,21 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
             task = self._task(task_id)
             if task.status not in {"error", "cancelled"}:
                 raise ValueError("只能重试失败或已取消的任务")
-            platform = classify_source(task.url).platform
-            task.platform = platform
-            if use_cookies is not None:
+            source = classify_source(task.url)
+            platform = source.platform
+            if platform == "kugou" and source.kind == "library":
+                if not use_cookies:
+                    raise KugouAuthError("请在原账号登录酷狗后，从浏览器扩展重试个人歌单任务")
+                session = session_from_cookies(cookies or [])
+                if not task.kugou_user_id:
+                    raise KugouAuthError("此个人歌单任务缺少账号标识，请移除后重新添加")
+                if session.user_id != task.kugou_user_id:
+                    raise KugouAuthError("当前酷狗登录账号与原任务不同；请切回原账号重试，或重新添加新账号任务")
+                if not hasattr(self, "_kugou_sessions"):
+                    self._kugou_sessions = {}
+                self._kugou_sessions[task.id] = session
+                task.use_cookies = True
+            elif use_cookies is not None:
                 cookies = host_legacy.cookies_for_platform(cookies or [], platform)
                 task.use_cookies = bool(use_cookies and cookies)
                 if task.use_cookies:
@@ -34,8 +47,9 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
                         self._write_cookies(cookies)
                     else:
                         self._write_cookies(cookies, platform)
-            if platform == "kugou":
+            if platform == "kugou" and source.kind != "library":
                 task.use_cookies = False
+            task.platform = platform
             self.cancelled.discard(task_id)
             task.status = "queued"
             task.progress = 0.0
@@ -44,6 +58,8 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
             task.current_title = ""
             task.item_index = 0
             task.item_count = 0
+            task.playlist_index = 0
+            task.playlist_count = 0
             task.error = ""
             task.updated_at = host_legacy.now_iso()
         self.emit(force=True)
@@ -86,7 +102,7 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
                     break
                 except Exception as exc:
                     final_error = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", str(exc)).strip()[-500:]
-                    if isinstance(exc, NonRetryableYoutubeError) or attempt >= AUTO_RETRY_COUNT:
+                    if isinstance(exc, (NonRetryableYoutubeError, KugouAuthError)) or attempt >= AUTO_RETRY_COUNT:
                         break
                     delay = AUTO_RETRY_DELAYS[min(attempt, len(AUTO_RETRY_DELAYS) - 1)]
                     with self.lock:
@@ -117,6 +133,7 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
                     task.status = "error"
                     task.error = final_error or "任务失败"
                 task.updated_at = host_legacy.now_iso()
+                getattr(self, "_kugou_sessions", {}).pop(task.id, None)
             self.emit(force=True)
 
     def base_download(self, task) -> None:
@@ -223,12 +240,13 @@ def install_version_info(queue_manager_cls) -> None:
     def host_info(self):
         info = original(self)
         info.update({
-            "version": "1.3.0",
+            "version": "1.4.0",
             **runtime_diagnostics(self.node_path),
             "album_organization": True,
             "auto_retry_count": AUTO_RETRY_COUNT,
             "manual_retry": True,
             "supported_platforms": ["youtube", "bilibili", "kugou"],
+            "kugou_personal_library": True,
             "download_backends": {"youtube": "yt-dlp", "bilibili": "yt-dlp", "kugou": "httpx"},
         })
         return info

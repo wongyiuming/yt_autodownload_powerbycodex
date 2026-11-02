@@ -27,6 +27,7 @@ input[type="url"]:focus { border-color: #6e7781; box-shadow: 0 0 0 2px rgba(9,10
 .badge.channel { background: #f2f0ff; color: #6f42c1; }
 .badge.favorites, .badge.collection { background: #e7f7fc; color: #087ca1; }
 .badge.song { background: #e9f8ef; color: #18743c; }
+.badge.library { background: #e9f8ef; color: #18743c; white-space: nowrap; }
 .badge.shortlink { background: #eef6ff; color: #0969da; }
 .badge.unknown { background: #f0f2f5; color: #667085; }
 .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }

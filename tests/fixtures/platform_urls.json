@@ -239,6 +239,42 @@
       "platform": "bilibili",
       "kind": "collection",
       "url": "https://www.bilibili.com/list/2142762?sid=3662502&otype=1"
+    },
+    {
+      "raw": "https://www.kugou.com/",
+      "platform": "kugou",
+      "kind": "library",
+      "url": "https://www.kugou.com/"
+    },
+    {
+      "raw": "https://kugou.com",
+      "platform": "kugou",
+      "kind": "library",
+      "url": "https://www.kugou.com/"
+    },
+    {
+      "raw": "http://WWW.KUGOU.COM/index.html?from=web",
+      "platform": "kugou",
+      "kind": "library",
+      "url": "https://www.kugou.com/"
+    },
+    {
+      "raw": "https://www.kugou.com/yy/html/rank.html",
+      "platform": "kugou",
+      "kind": "library",
+      "url": "https://www.kugou.com/"
+    },
+    {
+      "raw": "https://www.kugou.com/?from=login#personal",
+      "platform": "kugou",
+      "kind": "library",
+      "url": "https://www.kugou.com/"
+    },
+    {
+      "raw": "https://www.kugou.com/yy/special/index.html",
+      "platform": "kugou",
+      "kind": "library",
+      "url": "https://www.kugou.com/"
     }
   ],
   "invalid": [
@@ -281,7 +317,6 @@
     "https://www.bilibili.com/list/84912",
     "https://b23.tv/",
     "https://b23.tv/abc/extra",
-    "https://www.kugou.com/",
     "https://www.kugou.com/yy/special/single/collection_3_123.html",
     "https://www.kugou.com/yy/special/single/../../../private.html",
     "https://www.kugou.com/song/#hash=123",
@@ -290,6 +325,29 @@
     "https://www.kugou.com.evil.example/yy/special/single/123.html",
     "https://www.kugou.com/mixsong/.html",
     "https://www.kugou.com/mixsong/abc/extra.html",
-    "https://www.bilibili.com/list/2142762?sid=3662502&otype=bad"
+    "https://www.bilibili.com/list/2142762?sid=3662502&otype=bad",
+    "https://m.kugou.com/",
+    "https://m.kugou.com/index.html",
+    "https://fanxing.kugou.com/",
+    "https://www.kugou.com.evil.example/",
+    "https://kugou.com@evil.example/",
+    "https://evil.example@www.kugou.com/",
+    "https://www.kugou.com:8080/",
+    "https://www.kugou.com/song/",
+    "https://www.kugou.com/song/invalid",
+    "https://www.kugou.com/SONG/#hash=bad",
+    "https://www.kugou.com/%73ong/#hash=bad",
+    "https://www.kugou.com/yy/index.php?r=play/getdata",
+    "https://www.kugou.com/mixsong/",
+    "https://www.kugou.com/yy/special/single/",
+    "https://www.kugou.com/yy/special/single/0.html",
+    "https://www.kugou.com/page%ZZ",
+    "https://www.kugou.com/page%80",
+    "https://www.kugou.com//song/#hash=bad",
+    "https://www.kugou.com/yy%2findex.php?r=play/getdata",
+    "https://www.kugou.com/%2f%2e%2e%2fsong/",
+    "https://www.kugou.com/page%00",
+    "https://www.kugou.com/page%5csong",
+    "https://www.kugou.com/yy/index.php?r=PLAY/getdata"
   ]
 }

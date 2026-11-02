@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from urllib.parse import parse_qs, quote, urlencode, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
 
 @dataclass(frozen=True)
@@ -145,6 +145,17 @@ whole collection even when the page's query includes a currently playing bvid.
                 if album_id:
                     params["album_id"] = album_id
                 return Source("kugou", "song", "https://www.kugou.com/song/#" + urlencode(params))
+        # An invalid single-song/playlist URL must not select the whole account.
+        if re.search(r"%(?![A-Fa-f0-9]{2})", path):
+            raise ValueError("酷狗页面地址包含无效的路径编码")
+        decoded_path = re.sub(r"/+", "/", unquote(path, errors="strict"))
+        if re.search(r"[\\\x00-\x1f\x7f]", decoded_path) or re.search(r"(?:^|/)\.{1,2}(?=/|$)", decoded_path):
+            raise ValueError("酷狗页面地址包含无效的路径")
+        resource_path = bool(re.match(r"^(?:/song|/mixsong|/yy/special/single)(?:/|$)", decoded_path, re.I)) or (
+            decoded_path.lower() == "/yy/index.php" and _first(query, "r").lower() == "play/getdata"
+        )
+        if host in {"kugou.com", "www.kugou.com"} and not resource_path:
+            return Source("kugou", "library", "https://www.kugou.com/")
         raise ValueError("请打开酷狗歌单，或包含 hash 的歌曲播放页")
 
     raise ValueError("当前支持 YouTube、bilibili 和酷狗音乐的指定视频、歌曲与集合页面")

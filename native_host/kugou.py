@@ -181,6 +181,8 @@ class KugouClient:
         source = classify_source(url)
         if source.platform != "kugou":
             raise KugouError("该链接不是受支持的酷狗页面")
+        if source.kind == "library":
+            raise KugouError("个人全部歌单需要登录；请在已登录酷狗的 Chrome 窗口通过扩展加入队列")
         check_cancelled()
         if source.kind == "song":
             if "/mixsong/" in source.url:

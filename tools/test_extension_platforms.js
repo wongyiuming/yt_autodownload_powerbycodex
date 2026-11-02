@@ -10,16 +10,36 @@ const manifest = JSON.parse(fs.readFileSync(path.join(extension, "manifest.json"
 const youtube = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
 const bilibili = "https://space.bilibili.com/123/favlist?fid=456";
 const kugou = "https://www.kugou.com/yy/special/single/123.html";
+const kugouLibrary = "https://www.kugou.com/";
 const flush = () => new Promise(setImmediate);
 
-function backgroundHarness(tasks = []) {
+function backgroundHarness(tasks = [], options = {}) {
   const requests = [];
   const cookieReads = [];
+  const cookieRequests = [];
   let listener;
   const chrome = {
+    tabs: { query: async () => options.tabs ?? [{ id: 17, url: kugouLibrary }] },
     cookies: {
-      async getAll({ domain }) {
+      async getAllCookieStores() {
+        if (options.storeFailure) throw new Error("example permission error");
+        return options.stores ?? [{ id: "regular", tabIds: [12] }, { id: "private", tabIds: [17] }];
+      },
+      async getAll(query) {
+        const { domain } = query;
+        cookieRequests.push(query);
         cookieReads.push(domain);
+        if (options.cookieFailure) throw new Error("example cookie error");
+        if (domain === "kugou.com") return options.kugouCookies ?? [
+          { domain: ".kugou.com", name: "KuGoo", value: "KugooID=123&t=example", session: true },
+          { domain: ".kugou.com", name: "kg_mid", value: "device" },
+          { domain: "www.kugou.com", name: "kg_dfid", value: "device-file" },
+          { domain: ".kugou.com", name: "unrelated_tracking", value: "must-not-forward" },
+          { domain: ".kugou.com", name: "KuGoo", value: "expired", expirationDate: 1 },
+          { domain: "fanxing.kugou.com", name: "KuGoo", value: "other-service" },
+          { domain: "kugou.com.evil.example", name: "KuGoo", value: "wrong-domain" },
+          { domain: ".bilibili.com", name: "SESSDATA", value: "other-platform" },
+        ];
         return [
           { domain: `.${domain}`, name: "session", value: `cookie-for-${domain}` },
           { domain: "evil.example", name: "other", value: "must-not-forward" },
@@ -56,7 +76,7 @@ function backgroundHarness(tasks = []) {
   });
   vm.runInContext(fs.readFileSync(path.join(extension, "background.js"), "utf8"), context);
   return {
-    requests, cookieReads,
+    requests, cookieReads, cookieRequests,
     send: message => new Promise(resolve => listener(message, {}, resolve)),
   };
 }
@@ -120,6 +140,53 @@ async function testBackgroundRouting() {
   assert.match(result.error, /YouTube/);
   assert.equal(h.requests.length, dispatched, "invalid actions do not reach the Host");
   assert.equal(h.cookieReads.length, retryReads, "invalid actions do not read cookies");
+}
+
+async function testKugouLibraryCookies() {
+  const h = backgroundHarness([{ id: "library", url: kugouLibrary, platform: "youtube", use_cookies: false }]);
+  await flush();
+  let result = await h.send({ type: "enqueue", url: "https://kugou.com/yy/html/rank.html", mode: "video", useCookies: false });
+  assert.equal(result.ok, true);
+  const request = h.requests.at(-1);
+  assert.equal(request.kind, "library");
+  assert.equal(request.url, kugouLibrary);
+  assert.equal(request.mode, "audio");
+  assert.equal(request.use_cookies, true, "personal libraries require fresh account authentication");
+  assert.deepEqual(h.cookieRequests.map(({ domain, storeId }) => ({ domain, storeId })),
+    [{ domain: "kugou.com", storeId: "private" }]);
+  assert.deepEqual(Array.from(request.cookies, cookie => cookie.name), ["KuGoo", "kg_mid", "kg_dfid"]);
+  assert.equal(request.cookies[0].value, "KugooID=123&t=example");
+
+  result = await h.send({ type: "retry", taskId: "library", useCookies: false, url: youtube });
+  assert.equal(result.ok, true);
+  assert.equal(h.requests.at(-1).use_cookies, true);
+  assert.equal(h.cookieReads.length, 2, "retry re-reads the logged-in account instead of reusing a snapshot");
+  assert.equal(h.cookieRequests.at(-1).storeId, "private");
+
+  for (const options of [
+    { stores: [] }, { tabs: [] }, { storeFailure: true }, { cookieFailure: true },
+    { kugouCookies: [] },
+    { kugouCookies: [{ domain: ".kugou.com", name: "KuGoo", value: "expired", expirationDate: 1 }] },
+    { kugouCookies: [{ domain: "fanxing.kugou.com", name: "KuGoo", value: "other-service" }] },
+  ]) {
+    const failed = backgroundHarness([], options);
+    await flush();
+    const before = failed.requests.length;
+    result = await failed.send({ type: "enqueue", url: kugouLibrary, mode: "audio" });
+    assert.equal(result.ok, false, JSON.stringify(options));
+    assert.match(result.error, /登录状态/);
+    assert.equal(failed.requests.length, before, "unavailable login cannot enqueue an anonymous personal library");
+    assert.ok(!failed.cookieRequests.some(query => query.domain === "kugou.com" && !query.storeId),
+      "never fall back to another cookie store");
+  }
+
+  const invalid = backgroundHarness();
+  await flush();
+  for (const url of ["https://www.kugou.com/song/#hash=bad", "https://www.kugou.com.evil.example/", "https://m.kugou.com/"]) {
+    result = await invalid.send({ type: "enqueue", url, mode: "audio" });
+    assert.equal(result.ok, false);
+  }
+  assert.equal(invalid.cookieReads.length, 0, "unsupported pages do not read personal cookies");
 }
 
 function element(value = "") {
@@ -206,6 +273,24 @@ async function testPopupModes() {
   assert.equal(request.mode, "audio");
   assert.equal(request.useCookies, false);
 
+  chrome.tabs.query = async () => [{ url: "https://www.kugou.com/yy/html/rank.html", title: "酷狗音乐" }];
+  await vm.runInContext("readCurrentTab()", context);
+  assert.equal(vm.runInContext("detected.kind", context), "library", "reading a main-site tab automatically selects the account library");
+  assert.equal(cookie.checked, true);
+  assert.equal(cookie.disabled, true);
+  assert.equal(modes[0].input.disabled, true);
+  assert.match(elements.get("sourceHint").textContent, /全部自建.*收藏歌单及全部歌曲/);
+  assert.equal(elements.get("enqueue").textContent, "将个人全部歌单加入下载队列");
+  await elements.get("enqueue").events.click();
+  const libraryRequest = messages.findLast(message => message.type === "enqueue");
+  assert.equal(libraryRequest.url, kugouLibrary);
+  assert.equal(libraryRequest.kind, "library");
+  assert.equal(libraryRequest.useCookies, true);
+  assert.equal(libraryRequest.mode, "audio");
+  visit(kugou);
+  assert.equal(cookie.checked, false, "same-platform switch back to a public playlist stays anonymous");
+  assert.equal(elements.get("enqueue").textContent, "加入下载队列");
+
   visit("https://www.youtube.com/@example");
   assert.equal(cookie.checked, true, "platform preferences remain independent");
   assert.equal(modes[0].input.disabled, false);
@@ -213,10 +298,22 @@ async function testPopupModes() {
   visit(bilibili);
   assert.equal(cookie.checked, true);
   assert.equal(elements.get("channelTools").hidden, true);
+
+  context.renderQueue([
+    { id: "account-a", url: kugouLibrary, kind: "library", mode: "audio", status: "downloading",
+      kugou_user_id: "123", playlist_index: 2, playlist_count: 4, item_index: 15, item_count: 80 },
+    { id: "account-b", url: kugouLibrary, kind: "library", mode: "audio", status: "queued",
+      kugou_user_id: "456", playlist_index: 0, playlist_count: 3, item_index: 0, item_count: 12 },
+  ]);
+  const cards = elements.get("queue").children.slice(-2);
+  assert.match(cards[0].innerHTML, /账号 456 · 歌单 0\/3 · 曲目 0\/12/);
+  assert.match(cards[1].innerHTML, /账号 123 · 歌单 2\/4 · 曲目 15\/80/);
+  assert.doesNotMatch(cards[1].innerHTML, /账号 456/);
 }
 
 (async () => {
   await testBackgroundRouting();
+  await testKugouLibraryCookies();
   await testPopupModes();
   console.log("EXTENSION_PLATFORMS_SMOKE_OK");
 })().catch(error => {

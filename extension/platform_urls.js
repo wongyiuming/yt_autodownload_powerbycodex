@@ -8,7 +8,7 @@ function classifySourceUrl(raw) {
     label: {
       youtube: { video: "视频", playlist: "列表", channel: "频道" },
       bilibili: { video: "视频", favorites: "收藏夹", collection: "合集", shortlink: "短链接" },
-      kugou: { song: "歌曲", playlist: "歌单" },
+      kugou: { song: "歌曲", playlist: "歌单", library: "个人全部歌单" },
     }[platform][kind],
   });
   const number = (x) => /^[1-9][0-9]*$/.test(x || "");
@@ -105,6 +105,14 @@ function classifySourceUrl(raw) {
         if (/^[A-Fa-f0-9]{32}$/.test(songHash || "") && (!albumId || /^[0-9]+$/.test(albumId))) {
           return source("kugou", "song", `https://www.kugou.com/song/#hash=${songHash.toUpperCase()}${albumId ? `&album_id=${albumId}` : ""}`);
         }
+      }
+      // A malformed individual resource must not expand into the whole account.
+      const decodedPath = decodeURIComponent(path).replace(/\/+/g, "/");
+      if (/[\\\x00-\x1f\x7f]/.test(decodedPath) || /(?:^|\/)\.{1,2}(?=\/|$)/.test(decodedPath)) return unknown("URL 路径无效");
+      const resourcePath = /^(?:\/song|\/mixsong|\/yy\/special\/single)(?:\/|$)/i.test(decodedPath)
+        || (decodedPath.toLowerCase() === "/yy/index.php" && (q.get("r") || "").toLowerCase() === "play/getdata");
+      if (["kugou.com", "www.kugou.com"].includes(host) && !resourcePath) {
+        return source("kugou", "library", "https://www.kugou.com/");
       }
       return unknown("请选择歌单或 hash 歌曲页");
     }

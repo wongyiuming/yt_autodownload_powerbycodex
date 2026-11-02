@@ -42,6 +42,7 @@ function updateDetected() {
     useCookies.checked = Boolean(cookiePreferences[detected.platform]);
   }
   const kugou = detected.platform === "kugou";
+  const kugouLibrary = kugou && detected.kind === "library";
   document.querySelectorAll(".mode").forEach(label => {
     const input = label.querySelector("input");
     input.disabled = kugou && input.value === "video";
@@ -50,10 +51,11 @@ function updateDetected() {
   });
   if (kugou) setMode("audio");
   useCookies.disabled = !["youtube", "bilibili"].includes(detected.platform);
-  if (useCookies.disabled) useCookies.checked = false;
-  cookieLabel.textContent = kugou
-    ? "酷狗音乐使用 HTTP 直连，无需读取浏览器 Cookie"
-    : `使用${platformText(detected.platform) || "当前平台"}登录 Cookie（仅需登录时勾选）`;
+  if (useCookies.disabled) useCookies.checked = kugouLibrary;
+  cookieLabel.textContent = kugouLibrary
+    ? "自动使用当前 Chrome 的酷狗登录状态（个人歌单必需）"
+    : kugou ? "酷狗公开歌曲和歌单使用 HTTP 直连，无需读取浏览器 Cookie"
+      : `使用${platformText(detected.platform) || "当前平台"}登录 Cookie（仅需登录时勾选）`;
   kindBadge.className = `badge ${detected.kind}`;
   kindBadge.textContent = [platformText(detected.platform), detected.label].filter(Boolean).join(" · ");
   const hints = {
@@ -64,12 +66,14 @@ function updateDetected() {
     collection: "将下载该合集 / 视频列表中的全部可访问视频",
     shortlink: "将解析 bilibili 短链接，再按目标视频或集合下载",
     song: "获取歌曲播放地址并下载为 MP3",
-    unknown: "支持 YouTube 视频 / 列表 / 频道、bilibili 视频 / 收藏夹 / 合集、酷狗歌曲 / 歌单",
+    library: "加入队列后自动读取当前登录账号的全部自建 / 收藏歌单及全部歌曲，按歌单保存 MP3",
+    unknown: "支持 YouTube 视频 / 列表 / 频道、bilibili 视频 / 收藏夹 / 合集、酷狗歌曲 / 歌单 / 主站个人全部歌单",
   };
   sourceHint.textContent = kugou && detected.kind === "playlist"
     ? "将读取完整歌单，逐曲获取播放地址并下载为 MP3"
     : hints[detected.kind] || hints.unknown;
   enqueueButton.disabled = detected.kind === "unknown" || !hostReady() || repairing;
+  enqueueButton.textContent = kugouLibrary ? "将个人全部歌单加入下载队列" : "加入下载队列";
   const youtubeChannel = detected.platform === "youtube" && detected.kind === "channel";
   channelTools.hidden = !youtubeChannel;
   repairButton.disabled = !youtubeChannel || !hostReady() || repairing;
@@ -124,7 +128,14 @@ function statusText(status) {
 }
 
 function kindText(kind) {
-  return { video: "视频", playlist: "列表", channel: "频道", favorites: "收藏夹", collection: "合集", shortlink: "短链接", song: "歌曲" }[kind] || "来源";
+  return { video: "视频", playlist: "列表", channel: "频道", favorites: "收藏夹", collection: "合集", shortlink: "短链接", song: "歌曲", library: "个人全部歌单" }[kind] || "来源";
+}
+
+function taskCountText(index, total, label = "") {
+  const current = Number(index || 0);
+  const count = Number(total);
+  return Number.isSafeInteger(current) && current >= 0 && Number.isSafeInteger(count) && count > 0
+    ? ` · ${label}${current}/${count}` : "";
 }
 
 function renderQueue(items) {
@@ -143,17 +154,21 @@ function renderQueue(items) {
     card.className = "task";
     const percent = Math.max(0, Math.min(100, Number(task.progress || 0)));
     const title = task.current_title || task.title || task.url;
-    const currentCount = task.item_index && task.item_count ? ` · ${task.item_index}/${task.item_count}` : "";
+    const taskSource = classifySourceUrl(task.url);
+    const taskPlatform = taskSource.platform;
+    const personalLibrary = taskPlatform === "kugou" && taskSource.kind === "library";
+    const account = personalLibrary && task.kugou_user_id ? ` · 账号 ${escapeHtml(task.kugou_user_id)}` : "";
+    const playlistCount = personalLibrary ? taskCountText(task.playlist_index, task.playlist_count, "歌单 ") : "";
+    const currentCount = taskCountText(task.item_index, task.item_count, personalLibrary ? "曲目 " : "");
     const speed = task.speed || "";
     const eta = task.eta ? ` · ETA ${task.eta}` : "";
     const error = task.error ? ` · ${task.error}` : "";
-    const taskPlatform = classifySourceUrl(task.url).platform;
 
     card.innerHTML = `
       <div class="task-top">
         <div style="min-width:0">
           <div class="task-title" title="${escapeHtml(title)}">${escapeHtml(title)}</div>
-          <div class="task-sub">${platformText(taskPlatform)} · ${kindText(task.kind)} · ${task.mode === "audio" ? "MP3" : "MP4"}${currentCount}</div>
+          <div class="task-sub">${platformText(taskPlatform)} · ${kindText(task.kind)} · ${task.mode === "audio" ? "MP3" : "MP4"}${account}${playlistCount}${currentCount}</div>
         </div>
         <span class="task-state ${task.status}">${statusText(task.status)}</span>
       </div>

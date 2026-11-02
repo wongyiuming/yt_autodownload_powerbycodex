@@ -143,9 +143,35 @@ function recognizedSource(raw) {
   return source;
 }
 
+async function kugouLibraryCookies() {
+  let cookies;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const stores = await chrome.cookies.getAllCookieStores();
+    const store = stores.find(item => item.tabIds.includes(tab?.id));
+    if (!store) throw new Error("missing cookie store");
+    cookies = await chrome.cookies.getAll({ domain: "kugou.com", storeId: store.id });
+  } catch (_) {
+    throw new Error("无法读取当前窗口的酷狗登录状态。请在已登录酷狗的 Chrome 窗口打开扩展，并检查站点访问权限。");
+  }
+  const now = Date.now() / 1000;
+  const selected = cookies.filter(cookie => {
+    const domain = String(cookie.domain || "").replace(/^\./, "").toLowerCase();
+    return ["kugou.com", "www.kugou.com"].includes(domain)
+      && ["KuGoo", "kg_mid", "kg_dfid"].includes(cookie.name)
+      && cookie.value
+      && (cookie.session || cookie.expirationDate == null || cookie.expirationDate > now);
+  });
+  if (!selected.some(cookie => cookie.name === "KuGoo")) {
+    throw new Error("未读取到酷狗网页登录状态。请先在当前 Chrome 窗口登录 https://www.kugou.com/，再加入个人歌单。");
+  }
+  return selected;
+}
+
 async function platformCookies(platform, enabled) {
   const domain = { youtube: "youtube.com", bilibili: "bilibili.com" }[platform];
-  // Kugou always uses public HTTP requests, including on retries.
+  // Only the personal library needs Kugou account metadata. Public sources stay anonymous.
+  if (platform === "kugou" && enabled) return kugouLibraryCookies();
   if (!enabled || !domain) return [];
   try {
     const cookies = await chrome.cookies.getAll({ domain });
@@ -177,7 +203,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
     if (message.type === "enqueue") {
       const source = recognizedSource(message.url);
-      const useCookies = source.platform !== "kugou" && Boolean(message.useCookies);
+      const useCookies = source.platform === "kugou" ? source.kind === "library" : Boolean(message.useCookies);
       const cookies = await platformCookies(source.platform, useCookies);
       const result = await rpc("enqueue", {
         url: source.normalizedUrl,
@@ -206,7 +232,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (!task) throw new Error("任务不存在，请刷新队列后重试");
       // Derive the platform from the task itself, never the currently open tab.
       const source = recognizedSource(task.url);
-      const useCookies = source.platform !== "kugou" && Boolean(message.useCookies ?? task.use_cookies);
+      const useCookies = source.platform === "kugou" ? source.kind === "library" : Boolean(message.useCookies ?? task.use_cookies);
       const cookies = await platformCookies(source.platform, useCookies);
       const result = await rpc("retry", { task_id: message.taskId, cookies, use_cookies: useCookies });
       queue = result.queue || queue;

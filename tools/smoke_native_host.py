@@ -34,8 +34,10 @@ def main() -> int:
     reply = next((m for m in messages if m.get("reply_to") == "smoke-hello"), None)
     if not hello or not reply or not reply.get("ok"):
         raise AssertionError(f"Native Messaging hello failed: {messages!r}")
-    if hello["host"]["version"] != "1.3.0" or reply["host"]["version"] != "1.3.0":
+    if hello["host"]["version"] != "1.4.0" or reply["host"]["version"] != "1.4.0":
         raise AssertionError(f"Wrong runtime version: {messages!r}")
+    if not hello["host"].get("kugou_personal_library") or not reply["host"].get("kugou_personal_library"):
+        raise AssertionError("Native Host is missing the Kugou personal library capability")
     print(json.dumps({
         "ok": True, "runtime_version": hello["host"]["version"],
         "yt_dlp": hello["host"].get("yt_dlp_version"),
