@@ -36,9 +36,12 @@ jobs:
           node --check extension/background.js
           node --check extension/popup.js
           node --check extension/platform_urls.js
+          node --check extension/kugou_session.js
           node tools/test_extension_host_version.js
           node tools/test_platform_urls.js
           node tools/test_extension_platforms.js
+          node tests/test_kugou_session.js
+          node tools/test_extension_kugou_preview.js
 
       - name: Smoke test real channel album folders
         # External website behavior must not mask a passing offline regression suite.

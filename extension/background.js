@@ -1,4 +1,5 @@
 importScripts("platform_urls.js");
+importScripts("kugou_session.js");
 
 const HOST_NAME = "com.wongyiuming.yt_autodownload";
 const EXPECTED_HOST_VERSION = chrome.runtime.getManifest().version;
@@ -19,9 +20,28 @@ let seq = 1;
 const pending = new Map();
 let queue = [];
 let hostInfo = {};
+let kugouPreview = null;
+let previewGeneration = 0;
+
+function previewSummary() {
+  if (!kugouPreview) return null;
+  const { preview_id, status, user_id, playlist_count, known_track_count, unknown_track_count,
+    error, tab_id, request_key, loaded_count, confirming } = kugouPreview;
+  return { preview_id, status, user_id, playlist_count, known_track_count, unknown_track_count,
+    error, tab_id, request_key, loaded_count, confirming };
+}
 
 function broadcast() {
-  chrome.runtime.sendMessage({ type: "state", connected, compatible, expectedHostVersion: EXPECTED_HOST_VERSION, queue, hostInfo }).catch(() => {});
+  chrome.runtime.sendMessage({ type: "state", connected, compatible, expectedHostVersion: EXPECTED_HOST_VERSION, queue, hostInfo, kugouPreview: previewSummary() }).catch(() => {});
+}
+
+function discardKugouPreview(cancelRemote = true) {
+  const previous = kugouPreview;
+  kugouPreview = null;
+  previewGeneration += 1;
+  if (cancelRemote && previous?.preview_id && !previous.confirming && previous.status !== "consumed" && port && compatible) {
+    rpc("kugou_preview_cancel", { preview_id: previous.preview_id }).catch(() => {});
+  }
 }
 
 function scheduleReconnect() {
@@ -65,6 +85,7 @@ function connectHost() {
 
   activePort.onDisconnect.addListener(() => {
     if (port !== activePort) return;
+    discardKugouPreview(false);
     compatible = false;
     hostInfo = {};
     const error = chrome.runtime.lastError?.message || "Native host disconnected";
@@ -113,6 +134,7 @@ function rpc(action, payload = {}, timeoutMs = 30000) {
 }
 
 async function reconnectHost() {
+  discardKugouPreview();
   if (port) {
     const oldPort = port;
     port = null;
@@ -143,35 +165,124 @@ function recognizedSource(raw) {
   return source;
 }
 
-async function kugouLibraryCookies() {
-  let cookies;
+async function currentKugouTab(tabId, expectedUrl) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const source = classifySourceUrl(tab?.url || "");
+  if (!Number.isInteger(tab?.id) || (tabId != null && tab.id !== tabId)
+      || source.platform !== "kugou" || source.kind !== "library"
+      || (expectedUrl != null && tab.url !== expectedUrl)) {
+    throw new Error("酷狗标签页已切换，请回到已登录的酷狗主站，重新读取歌单 URL。");
+  }
+  return tab;
+}
+
+function rememberPreviewPage(record, page, offset = 0) {
+  if (!page?.preview_id || (record.preview_id && record.preview_id !== page.preview_id)
+      || (record.user_id && page.user_id && record.user_id !== page.user_id)
+      || !Number.isSafeInteger(page.playlist_count) || page.playlist_count < 0) {
+    throw new Error("歌单预览已失效，请重新读取歌单 URL。");
+  }
+  for (const key of ["preview_id", "status", "user_id", "playlist_count", "known_track_count", "unknown_track_count", "error"]) {
+    record[key] = page[key];
+  }
+  if (page.status === "ready" && offset <= record.loaded_count && Array.isArray(page.playlists)) {
+    record.loaded_count = Math.max(record.loaded_count, offset + page.playlists.length);
+  }
+}
+
+async function requireKugouPreview(message) {
+  const record = kugouPreview;
+  if (!record?.preview_id || record.preview_id !== message.previewId || record.tab_id !== message.tabId) {
+    throw new Error("歌单预览已失效，请重新读取歌单 URL。");
+  }
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const stores = await chrome.cookies.getAllCookieStores();
-    const store = stores.find(item => item.tabIds.includes(tab?.id));
-    if (!store) throw new Error("missing cookie store");
-    cookies = await chrome.cookies.getAll({ domain: "kugou.com", storeId: store.id });
-  } catch (_) {
-    throw new Error("无法读取当前窗口的酷狗登录状态。请在已登录酷狗的 Chrome 窗口打开扩展，并检查站点访问权限。");
+    await currentKugouTab(record.tab_id, record.tab_url);
+  } catch (error) {
+    if (kugouPreview === record) discardKugouPreview();
+    throw error;
   }
-  const now = Date.now() / 1000;
-  const selected = cookies.filter(cookie => {
-    const domain = String(cookie.domain || "").replace(/^\./, "").toLowerCase();
-    return ["kugou.com", "www.kugou.com"].includes(domain)
-      && ["KuGoo", "kg_mid", "kg_dfid"].includes(cookie.name)
-      && cookie.value
-      && (cookie.session || cookie.expirationDate == null || cookie.expirationDate > now);
-  });
-  if (!selected.some(cookie => cookie.name === "KuGoo")) {
-    throw new Error("未读取到酷狗网页登录状态。请先在当前 Chrome 窗口登录 https://www.kugou.com/，再加入个人歌单。");
+  if (kugouPreview !== record) throw new Error("歌单预览已取消，请重新读取歌单 URL。");
+  return record;
+}
+
+async function startKugouPreview(message) {
+  const source = recognizedSource(message.url);
+  if (source.platform !== "kugou" || source.kind !== "library") throw new Error("请从酷狗主站读取个人歌单 URL。");
+  if (!compatible) throw new Error(hostVersionError(hostInfo));
+  discardKugouPreview();
+  const generation = previewGeneration;
+  const record = { preview_id: "", status: "loading", tab_id: message.tabId, tab_url: "",
+    request_key: message.requestKey || "", loaded_count: 0, confirming: false };
+  kugouPreview = record;
+  try {
+    const tab = await currentKugouTab(message.tabId);
+    if (generation !== previewGeneration || kugouPreview !== record) throw new Error("歌单读取已取消。");
+    record.tab_id = tab.id;
+    record.tab_url = tab.url;
+    record.window_id = tab.windowId;
+    const cookies = await getKugouSessionCookies(tab.id);
+    await currentKugouTab(tab.id, tab.url);
+    if (generation !== previewGeneration || kugouPreview !== record) throw new Error("歌单读取已取消。");
+    const result = await rpc("kugou_preview_start", { cookies });
+    if (generation !== previewGeneration || kugouPreview !== record) {
+      if (result.preview?.preview_id && port && compatible) {
+        rpc("kugou_preview_cancel", { preview_id: result.preview.preview_id }).catch(() => {});
+      }
+      throw new Error("歌单读取已取消。");
+    }
+    rememberPreviewPage(record, result.preview);
+    broadcast();
+    return result;
+  } catch (error) {
+    if (kugouPreview === record) discardKugouPreview();
+    throw error;
   }
-  return selected;
+}
+
+async function getKugouPreview(message) {
+  const record = await requireKugouPreview(message);
+  const offset = Number(message.offset || 0);
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("歌单分页无效。");
+  const result = await rpc("kugou_preview_get", { preview_id: record.preview_id, offset, limit: 100 });
+  if (kugouPreview !== record) throw new Error("歌单预览已取消。");
+  try {
+    await currentKugouTab(record.tab_id, record.tab_url);
+  } catch (error) {
+    if (kugouPreview === record) { discardKugouPreview(); broadcast(); }
+    throw error;
+  }
+  if (kugouPreview !== record) throw new Error("歌单预览已取消。");
+  rememberPreviewPage(record, result.preview, offset);
+  return result;
+}
+
+async function confirmKugouPreview(message) {
+  const record = await requireKugouPreview(message);
+  if (record.confirming || record.status === "consumed") throw new Error("这份歌单已提交或正在提交，请勿重复确认。");
+  if (record.status !== "ready" || record.loaded_count < record.playlist_count) {
+    throw new Error("请先读取并展示全部歌单 URL，再确认下载。");
+  }
+  record.confirming = true;
+  broadcast();
+  try {
+    const cookies = await getKugouSessionCookies(record.tab_id);
+    await currentKugouTab(record.tab_id, record.tab_url);
+    if (kugouPreview !== record) throw new Error("歌单预览已失效，请重新读取。");
+    const result = await rpc("kugou_preview_confirm", { preview_id: record.preview_id, cookies }, 60000);
+    record.status = "consumed";
+    queue = result.queue || queue;
+    broadcast();
+    return result;
+  } finally {
+    record.confirming = false;
+    if (kugouPreview === record) broadcast();
+  }
 }
 
 async function platformCookies(platform, enabled) {
   const domain = { youtube: "youtube.com", bilibili: "bilibili.com" }[platform];
   // Only the personal library needs Kugou account metadata. Public sources stay anonymous.
-  if (platform === "kugou" && enabled) return kugouLibraryCookies();
+  if (platform === "kugou" && enabled) return getKugouSessionCookies();
   if (!enabled || !domain) return [];
   try {
     const cookies = await chrome.cookies.getAll({ domain });
@@ -187,7 +298,7 @@ async function platformCookies(platform, enabled) {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     if (message.type === "getState") {
-      sendResponse({ connected, compatible, expectedHostVersion: EXPECTED_HOST_VERSION, queue, hostInfo });
+      sendResponse({ connected, compatible, expectedHostVersion: EXPECTED_HOST_VERSION, queue, hostInfo, kugouPreview: previewSummary() });
       return;
     }
     if (message.type === "reconnectHost") {
@@ -198,12 +309,37 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const result = await rpc("list");
       queue = result.queue || [];
       hostInfo = result.host || hostInfo;
-      sendResponse({ connected: true, compatible, expectedHostVersion: EXPECTED_HOST_VERSION, queue, hostInfo });
+      sendResponse({ connected: true, compatible, expectedHostVersion: EXPECTED_HOST_VERSION, queue, hostInfo, kugouPreview: previewSummary() });
+      return;
+    }
+    if (message.type === "previewKugouLibrary") {
+      sendResponse(await startKugouPreview(message));
+      return;
+    }
+    if (message.type === "getKugouPreview") {
+      sendResponse(await getKugouPreview(message));
+      return;
+    }
+    if (message.type === "cancelKugouPreview") {
+      if (kugouPreview && (!message.previewId || kugouPreview.preview_id === message.previewId)
+          && (!message.requestKey || kugouPreview.request_key === message.requestKey)
+          && (message.tabId == null || kugouPreview.tab_id === message.tabId)) {
+        discardKugouPreview();
+        broadcast();
+      }
+      sendResponse({ ok: true });
+      return;
+    }
+    if (message.type === "confirmKugouLibrary") {
+      sendResponse(await confirmKugouPreview(message));
       return;
     }
     if (message.type === "enqueue") {
       const source = recognizedSource(message.url);
-      const useCookies = source.platform === "kugou" ? source.kind === "library" : Boolean(message.useCookies);
+      if (source.platform === "kugou" && source.kind === "library") {
+        throw new Error("请先读取歌单 URL，再点击确认下载。");
+      }
+      const useCookies = source.platform !== "kugou" && Boolean(message.useCookies);
       const cookies = await platformCookies(source.platform, useCookies);
       const result = await rpc("enqueue", {
         url: source.normalizedUrl,
@@ -232,6 +368,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (!task) throw new Error("任务不存在，请刷新队列后重试");
       // Derive the platform from the task itself, never the currently open tab.
       const source = recognizedSource(task.url);
+      if (source.platform === "kugou" && source.kind === "library" && task.kugou_confirmed !== true) {
+        throw new Error("此个人歌单任务尚未确认，请重新读取歌单 URL 并确认下载。");
+      }
       const useCookies = source.platform === "kugou" ? source.kind === "library" : Boolean(message.useCookies ?? task.use_cookies);
       const cookies = await platformCookies(source.platform, useCookies);
       const result = await rpc("retry", { task_id: message.taskId, cookies, use_cookies: useCookies });
@@ -268,4 +407,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 chrome.runtime.onStartup.addListener(connectHost);
 chrome.runtime.onInstalled.addListener(connectHost);
+chrome.tabs?.onActivated?.addListener(({ tabId, windowId }) => {
+  if (kugouPreview && kugouPreview.window_id === windowId && kugouPreview.tab_id !== tabId) {
+    discardKugouPreview();
+    broadcast();
+  }
+});
+chrome.tabs?.onUpdated?.addListener((tabId, change) => {
+  if (kugouPreview?.tab_id === tabId && (change.status === "loading" || (change.url && change.url !== kugouPreview.tab_url))) {
+    discardKugouPreview();
+    broadcast();
+  }
+});
+chrome.tabs?.onRemoved?.addListener(tabId => {
+  if (kugouPreview?.tab_id === tabId) { discardKugouPreview(); broadcast(); }
+});
 connectHost();

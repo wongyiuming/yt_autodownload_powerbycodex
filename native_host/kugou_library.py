@@ -29,7 +29,7 @@ _TRACKS_PATH = "/v4/get_list_all_file"
 _H5_SIGN_SEED = "NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt"
 _POSITIVE_ID = re.compile(r"[1-9][0-9]{0,19}\Z")
 _GLOBAL_ID = re.compile(r"collection_[0-9]+_[0-9]+_([1-9][0-9]*)_[0-9]+\Z")
-_COOKIE_NAMES = {"KuGoo", "kg_mid", "kg_dfid", "KugooID", "userid", "token", "a_id"}
+_COOKIE_NAMES = {"KuGoo", "kg_mid", "kg_dfid", "KugooID", "userid", "token", "t", "a_id", "appid"}
 
 
 class KugouAuthError(KugouError):
@@ -72,12 +72,15 @@ def session_from_cookies(cookies: list[dict]) -> KugouSession:
     """Extract only H5 session fields; never retain the browser's cookie jar.
 
     ``KuGoo`` is itself an ampersand-separated cookie containing ``KugooID``,
-    ``t`` and ``a_id``. A whole-cookie URL-encoded representation is accepted.
-    Host-only cookies from other Kugou applications are deliberately ignored.
+    ``t`` and ``a_id``. The extension can instead send the minimal separate
+    userid/token/appid fields returned by the official page's getBaseInfo.
+    Each candidate must provide its own complete userid/token pair: never join
+    half an old compound cookie to a token from a different login or partition.
     """
     if not isinstance(cookies, list) or len(cookies) > 1000:
         raise KugouAuthError("未收到有效的酷狗网页登录信息，请在酷狗主站登录后重试")
     values: dict[str, str] = {}
+    scopes: set[tuple[str, str]] = set()
     for cookie in cookies:
         if not isinstance(cookie, dict):
             continue
@@ -90,28 +93,54 @@ def session_from_cookies(cookies: list[dict]) -> KugouSession:
         expiry = cookie.get("expirationDate")
         if isinstance(expiry, (int, float)) and expiry <= time.time():
             continue
+        if name not in {"kg_mid", "kg_dfid"}:
+            scopes.add((str(cookie.get("storeId") or ""),
+                        json.dumps(cookie.get("partitionKey"), sort_keys=True, separators=(",", ":"))))
         if name in values and values[name] != value:
             raise KugouAuthError("检测到冲突的酷狗网页登录信息，请在当前浏览器重新登录")
         values[name] = value
+    if len(scopes) > 1:
+        raise KugouAuthError("酷狗登录字段来自不同浏览器会话或 Cookie 分区，请在当前标签页重新读取")
 
     compound: dict[str, str] = {}
     raw = values.get("KuGoo", "")
+    if raw.startswith('"') and raw.endswith('"'):
+        raw = raw[1:-1]
     # Preserve literal '+' in token values; this is not form-urlencoded data.
-    if "=" not in raw:
+    for _ in range(2):
+        if "=" in raw:
+            break
         raw = unquote(raw)
     for item in raw.split("&"):
         key, separator, value = item.partition("=")
-        if separator and key in {"KugooID", "t", "a_id"}:
+        if separator and key in {"KugooID", "userid", "t", "token", "a_id", "appid"}:
             if key in compound and compound[key] != unquote(value):
                 raise KugouAuthError("酷狗网页登录信息格式无效，请重新登录")
             compound[key] = unquote(value)
 
-    user_id = compound.get("KugooID") or values.get("KugooID") or values.get("userid") or ""
-    token = compound.get("t") or values.get("token") or ""
-    appid = compound.get("a_id") or values.get("a_id") or "1014"
-    if appid not in {"1010", "1014"}:
-        raise KugouAuthError("当前酷狗登录信息不属于网页版，请在酷狗主站重新登录")
-    return KugouSession(user_id, token, values.get("kg_mid", ""), values.get("kg_dfid") or "-", int(appid))
+    def coherent_value(fields, names, default=""):
+        alternatives = {fields[name] for name in names if fields.get(name)}
+        if len(alternatives) > 1:
+            raise KugouAuthError("酷狗登录字段相互冲突，请在当前标签页重新读取")
+        return next(iter(alternatives), default)
+
+    candidates: list[KugouSession] = []
+    for fields in (compound, values):
+        user_id = coherent_value(fields, ("KugooID", "userid"))
+        token = coherent_value(fields, ("t", "token"))
+        if not user_id or not token:
+            continue
+        appid = coherent_value(fields, ("a_id", "appid"), "1014")
+        if appid not in {"1010", "1014"}:
+            raise KugouAuthError("当前酷狗登录信息不属于网页版，请在酷狗主站重新登录")
+        candidates.append(KugouSession(user_id, token, values.get("kg_mid", ""),
+                                       values.get("kg_dfid") or "-", int(appid)))
+    if not candidates:
+        raise KugouAuthError("未收到完整的酷狗用户 ID 和登录令牌，请在当前酷狗标签页重新读取会话")
+    if any(candidate.user_id != candidates[0].user_id or candidate.token != candidates[0].token
+           for candidate in candidates[1:]):
+        raise KugouAuthError("检测到冲突的酷狗网页登录信息，请在当前浏览器重新登录")
+    return candidates[0]
 
 
 def _integer(value) -> int | None:

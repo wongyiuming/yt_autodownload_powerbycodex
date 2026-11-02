@@ -172,11 +172,14 @@ def download_kugou(manager, task, cancelled_error_cls, *, client=None) -> None:
     check_cancelled()
     source = classify_source(task.url)
     personal_library = source.kind == "library"
-    update(current_title="正在读取酷狗个人全部歌单…" if personal_library else "正在读取酷狗歌单…",
+    update(current_title="正在读取已确认歌单的歌曲…" if personal_library else "正在读取酷狗歌单…",
            speed="", eta="", progress=0, item_count=0, item_index=0,
            playlist_count=0, playlist_index=0)
     owned_client = client is None
     if personal_library:
+        if not task.kugou_confirmed or task.id not in getattr(manager, "_kugou_plans", {}):
+            raise ValueError("此任务没有已确认的歌单集合；请重新读取歌单 URL 并确认下载")
+        playlists = manager._kugou_plans[task.id]
         session = getattr(manager, "_kugou_sessions", {}).get(task.id)
         if not session or session.user_id != task.kugou_user_id:
             raise KugouAuthError("酷狗个人歌单登录会话已失效；请在原账号登录后从扩展点击重试")
@@ -187,7 +190,8 @@ def download_kugou(manager, task, cancelled_error_cls, *, client=None) -> None:
         collections = []
         playlist_failures = []
         if personal_library:
-            playlists = active_client.list_playlists(check_cancelled=check_cancelled)
+            # Never re-enumerate the account here or on retry: the download
+            # scope is exactly the snapshot displayed before confirmation.
             update(playlist_count=len(playlists))
             for playlist_index, playlist in enumerate(playlists, 1):
                 check_cancelled()

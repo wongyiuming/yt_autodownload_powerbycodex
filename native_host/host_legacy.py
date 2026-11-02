@@ -18,6 +18,7 @@ import traceback
 import uuid
 
 from platform_urls import classify_source
+from kugou_plan import playlist_plan, serialize_plan
 
 import imageio_ffmpeg
 import yt_dlp
@@ -95,6 +96,7 @@ class Task:
     playlist_index: int = 0
     playlist_count: int = 0
     kugou_user_id: str = ""
+    kugou_confirmed: bool = False
     error: str = ""
     created_at: str = ""
     updated_at: str = ""
@@ -153,6 +155,9 @@ class QueueManager:
         # Personal Kugou sessions are bound to a task, never serialized into
         # state.json, queue snapshots, cookie files, or diagnostics.
         self._kugou_sessions: dict = {}
+        # The confirmed URL/playlist snapshot contains no credentials and is
+        # saved separately so large libraries do not inflate queue messages.
+        self._kugou_plans: dict = {}
         self.download_root = DEFAULT_DOWNLOAD_ROOT
         self.node_path = self._find_node()
         self.ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
@@ -203,6 +208,10 @@ class QueueManager:
             configured_root = data.get("download_root")
             if configured_root:
                 self.download_root = Path(configured_root)
+            saved_plans = data.get("kugou_plans", {})
+            if not isinstance(saved_plans, dict):
+                saved_plans = {}
+            self._kugou_plans = {}
             for item in data.get("tasks", []):
                 if not isinstance(item, dict):
                     continue
@@ -215,7 +224,16 @@ class QueueManager:
                     if source.platform == "kugou" and source.kind == "library":
                         task.kind = source.kind
                         task.use_cookies = True
-                        if task.status in {"queued", "downloading"}:
+                        try:
+                            if task.kugou_confirmed is not True or task.id not in saved_plans:
+                                raise ValueError("unconfirmed")
+                            self._kugou_plans[task.id] = playlist_plan(saved_plans[task.id])
+                        except (ValueError, TypeError):
+                            task.kugou_confirmed = False
+                            if task.status != "done":
+                                task.status = "error"
+                                task.error = "此历史任务没有已确认的歌单集合；请重新读取歌单 URL 并确认下载"
+                        if task.kugou_confirmed and task.status in {"queued", "downloading"}:
                             task.status = "error"
                             task.error = "酷狗个人歌单登录会话未保存；请在原账号登录后点击重试"
                 except (ValueError, TypeError, AttributeError):
@@ -230,6 +248,7 @@ class QueueManager:
                 self.tasks.append(task)
         except Exception:
             self.tasks = []
+            self._kugou_plans = {}
 
     def _save(self) -> None:
         APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -239,6 +258,11 @@ class QueueManager:
                 "version": 1,
                 "download_root": str(self.download_root),
                 "tasks": [asdict(task) for task in self.tasks],
+                "kugou_plans": {
+                    task.id: serialize_plan(self._kugou_plans[task.id])
+                    for task in self.tasks
+                    if task.kugou_confirmed and task.id in getattr(self, "_kugou_plans", {})
+                },
             }
             tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(STATE_PATH)
@@ -251,7 +275,8 @@ class QueueManager:
         self._save()
         self.writer.send({"event": "queue", "queue": self.snapshot()})
 
-    def enqueue(self, raw_url: str, mode: str, title: str, cookies: list[dict], use_cookies: bool = False) -> Task:
+    def enqueue(self, raw_url: str, mode: str, title: str, cookies: list[dict], use_cookies: bool = False,
+                *, kugou_playlists=None) -> Task:
         source = classify_source(raw_url)
         if mode not in {"video", "audio"}:
             raise ValueError("mode 必须是 video 或 audio")
@@ -259,10 +284,14 @@ class QueueManager:
             raise ValueError("酷狗音乐仅支持音频下载，请选择 MP3")
         personal_library = source.platform == "kugou" and source.kind == "library"
         session = None
+        plan = ()
         if personal_library:
             from kugou_library import KugouAuthError, session_from_cookies
+            if kugou_playlists is None:
+                raise ValueError("请先读取歌单 URL，检查歌单集合后确认下载")
+            plan = playlist_plan(kugou_playlists)
             if not use_cookies:
-                raise KugouAuthError("读取酷狗个人歌单需要登录；请在已登录酷狗的 Chrome 窗口重新加入")
+                raise KugouAuthError("请从当前酷狗标签页读取会话后确认下载")
             session = session_from_cookies(cookies)
         cookies = cookies_for_platform(cookies, source.platform)
         enabled = personal_library or bool(use_cookies and cookies)
@@ -283,6 +312,8 @@ class QueueManager:
             title=(title or "").strip(),
             use_cookies=enabled,
             kugou_user_id=session.user_id if session else "",
+            kugou_confirmed=personal_library,
+            playlist_count=len(plan),
             created_at=stamp,
             updated_at=stamp,
         )
@@ -291,6 +322,9 @@ class QueueManager:
                 if not hasattr(self, "_kugou_sessions"):
                     self._kugou_sessions = {}
                 self._kugou_sessions[task.id] = session
+                if not hasattr(self, "_kugou_plans"):
+                    self._kugou_plans = {}
+                self._kugou_plans[task.id] = plan
             self.tasks.append(task)
         self.emit(force=True)
         self.wake.set()
@@ -316,6 +350,7 @@ class QueueManager:
                 raise ValueError("只能移除已完成、失败或取消的任务")
             self.tasks = [item for item in self.tasks if item.id != task_id]
             getattr(self, "_kugou_sessions", {}).pop(task_id, None)
+            getattr(self, "_kugou_plans", {}).pop(task_id, None)
         self.emit(force=True)
 
     def clear_finished(self) -> None:
@@ -323,6 +358,7 @@ class QueueManager:
             for task in self.tasks:
                 if task.status in TERMINAL:
                     getattr(self, "_kugou_sessions", {}).pop(task.id, None)
+                    getattr(self, "_kugou_plans", {}).pop(task.id, None)
             self.tasks = [task for task in self.tasks if task.status not in TERMINAL]
         self.emit(force=True)
 

@@ -1,6 +1,6 @@
 # 多平台支持与验证记录
 
-当前开发源码：Host / Chrome 扩展 1.4.0，尚未发行。个人歌单协议核验日期：2026-11-02。下文 bilibili 与酷狗公开歌单、公开媒体的联网样本保留自 2026-10-23 的 1.3.0 验证，不代表个人账号流程已实测通过。
+当前开发源码：Host / Chromium 扩展 1.4.1，尚未发行。个人歌单协议与网页会话逻辑核验日期：2026-11-02。下文 bilibili 与酷狗公开歌单、公开媒体的联网样本保留自 2026-10-23 的 1.3.0 验证，不代表个人账号流程已实测通过。
 
 已发行的 Windows v0.2.0 包包含 Host / 扩展 1.3.0，没有个人歌单入口。新代码应使用对应提交的源码或 Windows Actions 产物验证；本次不创建 Release 或版本标签。
 
@@ -11,13 +11,39 @@
 | YouTube | 既有 yt-dlp 流程、频道专辑目录 | yt-dlp + FFmpeg | 默认匿名，用户可选当前 Chrome Cookie |
 | bilibili | yt-dlp 的 Bilibili 视频、收藏夹、合集、系列与短链接提取器 | yt-dlp + FFmpeg | 默认匿名，用户可选 bilibili Cookie |
 | 酷狗公开来源 | httpx 读取官网公开页面及完整歌单 API | httpx 流式请求，MP3 原字节保存，其他格式由 FFmpeg 转 MP3 | 无 Cookie，不读取浏览器登录信息 |
-| 酷狗个人歌单 | 主站 URL 识别为个人音乐库；使用账号接口分页读取自建、收藏歌单及每张歌单歌曲 | 复用公开播放地址和 HTTP 媒体路径；按账号、歌单建目录 | 自动读取当前 Chrome 的酷狗会话；凭据只驻留内存，任务绑定用户 ID |
+| 酷狗个人歌单 | 主站 URL 识别为个人音乐库；先分页读取全部歌单并展示名称、数量、URL，确认后读取歌曲 | 复用公开播放地址和 HTTP 媒体路径；按账号、歌单建目录 | 读取当前 Chrome / Brave 等 Chromium 标签页的酷狗会话；凭据只驻留内存，任务绑定用户 ID 与已确认歌单计划 |
 
 `platform_urls.py` 与 `extension/platform_urls.js` 共享 URL fixture，避免弹窗接受的链接在 Host 被拒绝。任务平台由真实 URL 推导，不依赖消息中的平台字段。YouTube / bilibili Cookie 按平台分别存储，酷狗个人会话不写入 Cookie 文件或队列状态；YouTube 的 Node/EJS/播放器回退配置不会传给 bilibili。
 
-## 酷狗个人歌单：协议依据与验证范围（1.4.0）
+## 酷狗个人歌单：协议依据与验证范围（1.4.1）
 
-在已登录酷狗的 Chrome 资料中，扩展将 `https://www.kugou.com/` 识别为个人歌单来源。打开扩展会自动识别入口，用户加入队列后才在下载 worker 中读取全部歌单与歌曲。具体公开歌单和单曲 URL 保留原语义；无需网页提供“我的歌单”链接。
+在当前已登录酷狗的主站标签页中，扩展将 `https://www.kugou.com/` 识别为个人歌单来源。打开扩展只识别入口；点击「读取歌单 URL」才读取歌单目录，点击「确认下载以上歌单」才加入下载队列。具体公开歌单和单曲 URL 保留原语义；无需网页提供“我的歌单”链接。
+
+### 网页会话读取与 1.4.0 修复
+
+1.4.0 在 Cookie API 没有返回名为 `KuGoo` 的 Cookie 时提前报“未读取到酷狗网页登录状态”，没有检查当前标签页的实际会话。用户反馈的“网页顶部显示昵称、扩展报错”能确认两边读取结果不一致，不能据此确定是浏览器分区、站点设置或登录方式变化。
+
+本次重新读取的官网 [`cmhead.min.js`](https://www.kugou.com/common/js/cmhead.min.js?20220119) 仍用 `utility.read("KuGoo")` 判断显示登录用户，并从其中读取昵称和头像；[`getBaseInfo.min.js`](https://staticssl.kugou.com/common/js/min/npm/getBaseInfo.min.js) 的普通网页分支仍从 `KuGoo.KugooID` / `KuGoo.t` 提供 `userid` / `token`。没有证据表明官网已统一改用新的登录 Cookie 或某个 `localStorage` 登录键。
+
+1.4.1 的会话读取顺序为：
+
+1. 校验明确指定的标签页仍是 HTTPS 酷狗主站，在该页顶层 `MAIN` 环境调用其已有的 `getBaseInfo(1014, callback)`。只返回 `userid`、`token`、`appid`、`mid`、`dfid`。普通浏览器分支同步回调；官网 SDK 还包含异步客户端分支，因此扩展等待回调，超时后转入下一步。
+2. 页面没有该函数或未返回完整字段时，从这个页面实际的 `document.cookie` 提取官网使用的 `KuGoo`、`kg_mid`、`kg_dfid`，不动态加载远程脚本，不扫描页面存储，不把其他 Cookie 值返回扩展。
+3. 页面会话仍不完整或注入不可用时，按 `getAllCookieStores()` 的 `tabIds` 选择当前标签页所属 store，再按当前 URL 和已知 Cookie 名查询。浏览器提供 `getPartitionKey()` 时，再单独读取这个标签页的分区；不把不同 store / 分区的半份账号和令牌拼成会话。没有分区 API 的版本保留未分区查询路径。
+
+Chromium 的 [`cookies` API 文档](https://developer.chrome.com/docs/extensions/reference/api/cookies) 规定未指定分区时查询未分区 Cookie；`getPartitionKey` 从 Chrome 132 起提供。[Chromium API schema](https://github.com/chromium/chromium/blob/main/extensions/common/api/cookies.json) 明确定义其返回值为 `{partitionKey: CookiePartitionKey}`。扩展按 API 是否存在判断能力，不用浏览器名称判断；Brave 等实现相同 Chromium API 的浏览器走相同路径。
+
+新增 `scripting` 权限配合已有酷狗站点访问权限，用于读取当前页必要会话。[`scripting` 官方文档](https://developer.chrome.com/docs/extensions/reference/api/scripting) 说明注入函数会被序列化、不会保留外部闭包，并且 `executeScript()` 会等待函数返回的 Promise 完成；本实现的注入函数自包含，等待结果后才向 Host 传递规范化字段。更新安装后需在 `chrome://extensions` / `brave://extensions` 重新加载扩展，让新增权限生效。
+
+会话错误分为“页面和 Cookie API 均不可读”与“读取成功但字段不完整”。诊断只报告页面可读、账号字段存在、令牌字段存在、Cookie API 可读等布尔结果，不回显 Cookie/token、实际账号值或浏览器异常原文。缺少一个 Cookie 名不再直接断言未登录。Host 接受官网 SDK 的规范化字段，也兼容原 `KuGoo` 复合字段；不将不完整的不同来源字段拼成凭据，并拒绝冲突账号。
+
+### 歌单 URL 预览与确认
+
+预览在独立读取流程中完成全部歌单列表分页，只调用歌单目录读取，不解析每张歌单的歌曲，也不进入下载队列。界面展示账号 ID、歌单名称、曲目数和真实公开 URL；未知数量明确显示未知，缺少公开 URL 时显示歌单 ID，不根据局部 ID 猜造分享链接。多页结果必须全部展示后才允许确认。
+
+预览有效期为 15 分钟。在同一标签页、同一来源下关闭弹窗后重新打开可恢复；取消、切换标签页、改变来源或重新连接 Host 会使原预览失效。空目录显示零歌单，不能把认证失败、分页错误当作空目录成功。
+
+点击「确认下载以上歌单」会再次读取同一标签页会话，核对账号仍与预览一致，再一次性消费预览、建立下载任务。确认过的歌单计划持久化为不含凭据的元数据，歌曲解析与下载只在这一步之后执行。切号、重复确认、预览未就绪 / 未展示完 / 已过期都会明确拒绝。
 
 ### 已核验的协议依据
 
@@ -36,13 +62,13 @@
 
 收藏来源沿用公开解析流程；私密、下架或无法解析的来源会报告该歌单失败。自建歌单里没有有效歌曲 hash 的记录保留为不可用条目，逐曲报告失败并继续；现有公开解析器遇到缺 hash 的记录仍会报告整张公开歌单读取失败。
 
-本地验证通过 97 项 Python 回归、扩展平台/版本集成测试，以及 46 个有效 URL 和 71 个拒绝 URL 的 JS/Python 共用用例。真实 Native Messaging 进程验证了 1.4.0 握手、缺失/无效登录的错误返回和日志脱敏；本地 HTTP + FFmpeg 流程生成 4,005 字节 MP3，重复执行只发生一次媒体传输。这些验证使用模拟账号元数据或本地生成的音频。
+离线测试覆盖官网 SDK 同步 / 异步回调、超时或函数缺失时读取实际页面 Cookie、页面字段不完整时 Cookie API 回退、store / 分区隔离与缺少新 API 的兼容路径。Host 回归覆盖歌单预览、账号绑定、确认与历史任务恢复、分页及下载行为；Native Messaging 和本地 HTTP + FFmpeg 烟雾测试使用模拟账号元数据或本地生成音频。测试数量与通过结果以当前提交的本地输出及 CI 记录为准，不将旧版验证数字作为新版结果。
 
 ### 会话、恢复和结果完整性
 
-个人歌单任务只在状态中保存账号 ID，不保存 Cookie/token。重试自动重新读取当前 Chrome 的酷狗登录状态，并核对与原任务的账号一致；切号后需要新建任务。Host 退出或重启会丢失内存会话，未完成的个人任务恢复为失败并提示重新登录重试，不会静默改为匿名模式或使用另一账号。
+个人歌单任务在状态中保存账号 ID 和已确认歌单计划（名称、ID、曲目数及已有公开 URL），不保存 Cookie/token。重试自动重新读取当前酷狗主站标签页的会话，并核对与原任务账号一致；继续使用原先确认的歌单集合，切号或更新范围需重新读取并确认。Host 退出或重启会丢失内存会话，未完成的个人任务恢复为失败并提示重新取得会话重试，不会静默改为匿名模式或使用另一账号。1.4.0 历史任务没有已确认的计划，升级后要求重新读取歌单 URL 并确认，不能直接以旧任务继续下载。
 
-全部歌单读取在后台 worker 中运行，队列只回传计数、当前标题和进度，完整歌曲数据不写入 Native Messaging 队列快照。目录为 `audio/kugou/用户 <用户ID>/<歌单标题> [<歌单ID>]/`；接口确认的空音乐库可正常完成，空歌单保留目录。歌曲 hash 的全局归档用于复用已下载媒体，同曲出现在其他歌单时通过硬链接或复制补齐目标目录，不能直接跳过而留下不完整歌单。
+歌单目录通过专门的预览分页消息交给界面；队列广播只回传计数、当前标题、进度和是否已确认等摘要，不广播 token、完整歌单计划或歌曲数据。目录为 `audio/kugou/用户 <用户ID>/<歌单标题> [<歌单ID>]/`；空歌单保留目录。歌曲 hash 的全局归档用于复用已下载媒体，同曲出现在其他歌单时通过硬链接或复制补齐目标目录，不能直接跳过而留下不完整歌单。
 
 一张歌单或一首歌失败会继续其余内容，并将整个任务标记为失败，已完成文件可在重试时复用。分页必须检查总数、提前结束、重复页、数量变化及安全上限；无法确认完整性时不报告全部成功。
 
@@ -89,11 +115,14 @@ python -m unittest discover -s tests -v
 node tools/test_platform_urls.js
 node tools/test_extension_platforms.js
 node tools/test_extension_host_version.js
+node tools/test_extension_kugou_preview.js
+node tests/test_kugou_session.js
 python native_host/host.py --smoke-local-kugou
 python native_host/host.py --smoke-local-mp3
 ```
 
-- Python 回归涵盖平台路由、登录状态隔离、历史队列兼容、集合分页、试听 / 权限错误、下载完整性、取消、转换和去重；个人歌单增加账号绑定、会话丢失后的恢复、逐歌单错误处理与同曲多目录复用验证。
+- Python 回归涵盖平台路由、登录状态隔离、历史队列兼容、集合分页、试听 / 权限错误、下载完整性、取消、转换和去重；个人歌单增加预览只读、过期与取消、一次性确认、账号绑定、确认计划持久化、旧任务要求确认、会话丢失后的恢复、逐歌单错误处理与同曲多目录复用验证。
+- 会话 JS 回归把注入函数序列化到独立上下文，检查同步 / 异步 SDK、页面 Cookie 回退、API 权限失败、字段不完整、标签页切换和 store / 分区隔离；测试只使用构造凭据，不读取真实账号。
 - 共用 URL fixtures 覆盖支持入口与拒绝案例；用例数量以当前测试输出为准。个人入口需与已有具体歌曲、公开歌单以及伪造域名区分。
 - 酷狗本地烟雾测试只模拟歌曲元数据，媒体通过真实 localhost HTTP 传输，使用真实 FFmpeg 转换；连续运行两次任务只传输一次。
 - Windows Actions 同时运行这些回归、冻结 EXE 的两条实际 MP3 流程、安装器与 Native Messaging 握手。CI 结果以对应提交的工作流为准。

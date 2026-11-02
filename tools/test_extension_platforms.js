@@ -142,51 +142,17 @@ async function testBackgroundRouting() {
   assert.equal(h.cookieReads.length, retryReads, "invalid actions do not read cookies");
 }
 
-async function testKugouLibraryCookies() {
-  const h = backgroundHarness([{ id: "library", url: kugouLibrary, platform: "youtube", use_cookies: false }]);
+async function testKugouLibraryRequiresConfirmation() {
+  const h = backgroundHarness([{ id: "old-library", url: kugouLibrary, use_cookies: true }]);
   await flush();
-  let result = await h.send({ type: "enqueue", url: "https://kugou.com/yy/html/rank.html", mode: "video", useCookies: false });
-  assert.equal(result.ok, true);
-  const request = h.requests.at(-1);
-  assert.equal(request.kind, "library");
-  assert.equal(request.url, kugouLibrary);
-  assert.equal(request.mode, "audio");
-  assert.equal(request.use_cookies, true, "personal libraries require fresh account authentication");
-  assert.deepEqual(h.cookieRequests.map(({ domain, storeId }) => ({ domain, storeId })),
-    [{ domain: "kugou.com", storeId: "private" }]);
-  assert.deepEqual(Array.from(request.cookies, cookie => cookie.name), ["KuGoo", "kg_mid", "kg_dfid"]);
-  assert.equal(request.cookies[0].value, "KugooID=123&t=example");
-
-  result = await h.send({ type: "retry", taskId: "library", useCookies: false, url: youtube });
-  assert.equal(result.ok, true);
-  assert.equal(h.requests.at(-1).use_cookies, true);
-  assert.equal(h.cookieReads.length, 2, "retry re-reads the logged-in account instead of reusing a snapshot");
-  assert.equal(h.cookieRequests.at(-1).storeId, "private");
-
-  for (const options of [
-    { stores: [] }, { tabs: [] }, { storeFailure: true }, { cookieFailure: true },
-    { kugouCookies: [] },
-    { kugouCookies: [{ domain: ".kugou.com", name: "KuGoo", value: "expired", expirationDate: 1 }] },
-    { kugouCookies: [{ domain: "fanxing.kugou.com", name: "KuGoo", value: "other-service" }] },
-  ]) {
-    const failed = backgroundHarness([], options);
-    await flush();
-    const before = failed.requests.length;
-    result = await failed.send({ type: "enqueue", url: kugouLibrary, mode: "audio" });
-    assert.equal(result.ok, false, JSON.stringify(options));
-    assert.match(result.error, /登录状态/);
-    assert.equal(failed.requests.length, before, "unavailable login cannot enqueue an anonymous personal library");
-    assert.ok(!failed.cookieRequests.some(query => query.domain === "kugou.com" && !query.storeId),
-      "never fall back to another cookie store");
-  }
-
-  const invalid = backgroundHarness();
-  await flush();
-  for (const url of ["https://www.kugou.com/song/#hash=bad", "https://www.kugou.com.evil.example/", "https://m.kugou.com/"]) {
-    result = await invalid.send({ type: "enqueue", url, mode: "audio" });
-    assert.equal(result.ok, false);
-  }
-  assert.equal(invalid.cookieReads.length, 0, "unsupported pages do not read personal cookies");
+  let result = await h.send({ type: "enqueue", url: kugouLibrary, mode: "audio", useCookies: true });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /先读取歌单 URL/);
+  result = await h.send({ type: "retry", taskId: "old-library" });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /尚未确认/);
+  assert.equal(h.cookieReads.length, 0, "legacy library actions cannot bypass preview confirmation");
+  assert.equal(h.requests.filter(request => ["enqueue", "retry"].includes(request.action)).length, 0);
 }
 
 function element(value = "") {
@@ -229,12 +195,16 @@ async function testPopupModes() {
   };
   const messages = [];
   const chrome = {
-    tabs: { query: async () => [{ url: youtube, title: "video" }] },
+    tabs: { query: async () => [{ id: 17, url: youtube, title: "video" }] },
     runtime: {
       getManifest: () => manifest,
       onMessage: { addListener() {} },
       async sendMessage(message) {
         messages.push(message);
+        if (message.type === "previewKugouLibrary") return { ok: true, preview: {
+          preview_id: "fixture-preview", status: "ready", user_id: "123", playlist_count: 0,
+          known_track_count: 0, unknown_track_count: 0, playlists: [], offset: 0, next_offset: null,
+        } };
         return { ok: true, connected: true, hostInfo: { version: manifest.version }, queue: [] };
       },
     },
@@ -273,20 +243,20 @@ async function testPopupModes() {
   assert.equal(request.mode, "audio");
   assert.equal(request.useCookies, false);
 
-  chrome.tabs.query = async () => [{ url: "https://www.kugou.com/yy/html/rank.html", title: "酷狗音乐" }];
+  chrome.tabs.query = async () => [{ id: 17, url: "https://www.kugou.com/yy/html/rank.html", title: "酷狗音乐" }];
   await vm.runInContext("readCurrentTab()", context);
   assert.equal(vm.runInContext("detected.kind", context), "library", "reading a main-site tab automatically selects the account library");
   assert.equal(cookie.checked, true);
   assert.equal(cookie.disabled, true);
   assert.equal(modes[0].input.disabled, true);
-  assert.match(elements.get("sourceHint").textContent, /全部自建.*收藏歌单及全部歌曲/);
-  assert.equal(elements.get("enqueue").textContent, "将个人全部歌单加入下载队列");
+  assert.match(elements.get("sourceHint").textContent, /全部自建.*收藏歌单 URL/);
+  assert.equal(elements.get("enqueue").textContent, "读取歌单 URL");
   await elements.get("enqueue").events.click();
-  const libraryRequest = messages.findLast(message => message.type === "enqueue");
+  const libraryRequest = messages.findLast(message => message.type === "previewKugouLibrary");
   assert.equal(libraryRequest.url, kugouLibrary);
-  assert.equal(libraryRequest.kind, "library");
-  assert.equal(libraryRequest.useCookies, true);
-  assert.equal(libraryRequest.mode, "audio");
+  assert.equal(libraryRequest.tabId, 17);
+  assert.equal(messages.filter(message => message.type === "enqueue" && message.url === kugouLibrary).length, 0);
+  assert.equal(elements.get("confirmKugouDownload").disabled, true, "an empty library cannot enqueue a download");
   visit(kugou);
   assert.equal(cookie.checked, false, "same-platform switch back to a public playlist stays anonymous");
   assert.equal(elements.get("enqueue").textContent, "加入下载队列");
@@ -313,7 +283,7 @@ async function testPopupModes() {
 
 (async () => {
   await testBackgroundRouting();
-  await testKugouLibraryCookies();
+  await testKugouLibraryRequiresConfirmation();
   await testPopupModes();
   console.log("EXTENSION_PLATFORMS_SMOKE_OK");
 })().catch(error => {

@@ -28,6 +28,8 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
             source = classify_source(task.url)
             platform = source.platform
             if platform == "kugou" and source.kind == "library":
+                if not task.kugou_confirmed or task.id not in getattr(self, "_kugou_plans", {}):
+                    raise ValueError("此任务没有已确认的歌单集合；请重新读取歌单 URL 并确认下载")
                 if not use_cookies:
                     raise KugouAuthError("请在原账号登录酷狗后，从浏览器扩展重试个人歌单任务")
                 session = session_from_cookies(cookies or [])
@@ -59,7 +61,7 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
             task.item_index = 0
             task.item_count = 0
             task.playlist_index = 0
-            task.playlist_count = 0
+            task.playlist_count = len(self._kugou_plans[task.id]) if task.kugou_confirmed else 0
             task.error = ""
             task.updated_at = host_legacy.now_iso()
         self.emit(force=True)
@@ -240,13 +242,14 @@ def install_version_info(queue_manager_cls) -> None:
     def host_info(self):
         info = original(self)
         info.update({
-            "version": "1.4.0",
+            "version": "1.4.1",
             **runtime_diagnostics(self.node_path),
             "album_organization": True,
             "auto_retry_count": AUTO_RETRY_COUNT,
             "manual_retry": True,
             "supported_platforms": ["youtube", "bilibili", "kugou"],
             "kugou_personal_library": True,
+            "kugou_playlist_preview": True,
             "download_backends": {"youtube": "yt-dlp", "bilibili": "yt-dlp", "kugou": "httpx"},
         })
         return info

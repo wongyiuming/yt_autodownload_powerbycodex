@@ -86,6 +86,57 @@ class TestKugouSession(unittest.TestCase):
                 KugouSession(user_id, token)
             self.assertNotIn(TOKEN, str(error.exception))
 
+    def test_accepts_normalized_page_fields_without_compound_cookie(self):
+        session = session_from_cookies([
+            cookie("userid", "123", domain="www.kugou.com"),
+            cookie("token", TOKEN, domain="www.kugou.com"),
+            cookie("a_id", "1014", domain="www.kugou.com"),
+            cookie("kg_mid", "page-mid"), cookie("kg_dfid", "page-dfid"),
+        ])
+        self.assertEqual(session.user_id, "123")
+        self.assertEqual(session.token, TOKEN)
+        self.assertEqual(session.mid, "page-mid")
+        self.assertEqual(session.dfid, "page-dfid")
+        self.assertNotIn(TOKEN, repr(session))
+
+    def test_supports_known_h5_aliases_without_combining_distinct_pairs(self):
+        session = session_from_cookies([cookie("KugooID", "123"), cookie("t", TOKEN), cookie("appid", "1010")])
+        self.assertEqual(session.token, TOKEN)
+        self.assertEqual(session.appid, 1010)
+        for cookies in ([cookie("KuGoo", "KugooID=123"), cookie("token", TOKEN)],
+                        [cookie("KuGoo", f"t={TOKEN}"), cookie("userid", "123")]):
+            with self.assertRaisesRegex(KugouAuthError, "完整"):
+                session_from_cookies(cookies)
+
+    def test_rejects_conflicting_compound_and_separate_accounts(self):
+        with self.assertRaisesRegex(KugouAuthError, "冲突"):
+            session_from_cookies([
+                cookie("KuGoo", "KugooID=123&t=old-session&a_id=1014"),
+                cookie("userid", "456"), cookie("token", TOKEN), cookie("a_id", "1014"),
+            ])
+        with self.assertRaisesRegex(KugouAuthError, "冲突"):
+            session_from_cookies([cookie("KugooID", "123"), cookie("userid", "456"), cookie("token", TOKEN)])
+
+    def test_complete_separate_pair_does_not_need_incomplete_old_compound(self):
+        session = session_from_cookies([
+            cookie("KuGoo", "KugooID=123&NickName=old-name"),
+            cookie("userid", "456"), cookie("token", TOKEN),
+        ])
+        self.assertEqual(session.user_id, "456")
+        self.assertEqual(session.token, TOKEN)
+
+    def test_rejects_half_sessions_across_stores_and_partitions(self):
+        for left, right in (({"storeId": "profile-a"}, {"storeId": "profile-b"}),
+                            ({}, {"partitionKey": {"topLevelSite": "https://kugou.com"}})):
+            with self.assertRaisesRegex(KugouAuthError, "不同浏览器会话或 Cookie 分区"):
+                session_from_cookies([cookie("userid", "123", **left), cookie("token", TOKEN, **right)])
+
+    def test_quoted_and_double_encoded_compound_cookies_are_supported(self):
+        raw = f"KugooID=123&t={TOKEN}&a_id=1014"
+        for value in ('"' + raw + '"', quote(quote(raw, safe=""), safe="")):
+            with self.subTest(quoted=value.startswith('"')):
+                self.assertEqual(session_from_cookies([cookie("KuGoo", value)]).token, TOKEN)
+
 
 class TestKugouLibrary(unittest.TestCase):
     def client(self, handler, **http_options):
