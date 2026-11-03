@@ -2,6 +2,45 @@
 
 把原来的 Python/yt-dlp 下载脚本改造成 **Chrome 操作入口 + Windows 本机下载组件**。安装完成后，日常不需要再打开 PyCharm、VS Code 或 Codex：只在 Chrome 中打开支持的视频、收藏夹、合集或歌单，然后从扩展加入队列。
 
+## 开发版：酷狗个人歌单（Host / 扩展 1.4.1，尚未发行）
+
+本次源码增加“当前酷狗账号的全部歌单”入口，并修复 1.4.0 把扩展未读到 `KuGoo` Cookie 直接当作未登录的问题。流程改为 **先读取并展示歌单 URL，再确认下载**。下方 **v0.2.0 安装包仍是 Host / 扩展 1.3.0，不包含个人歌单功能**。体验此功能需要使用包含本次改动的源码安装，或对应提交的 Windows Actions 构建产物；Host 与扩展必须同时升级到 **1.4.1**。本次没有创建新的 Release 或版本标签。
+
+### 先读取歌单 URL，再确认下载
+
+1. 在 Chrome、Brave 等 Chromium 浏览器的当前资料中打开 [酷狗主站](https://www.kugou.com/)，登录需要读取的账号，并保持这个标签页为当前页。
+2. 打开扩展，或点击「读取当前页」。主站入口会自动识别为个人歌单来源，无需在酷狗网页寻找“我的歌单”按钮，也无需填写用户 ID 或接口地址。也可以直接粘贴 `https://www.kugou.com/`，但仍需有当前已登录的酷狗主站标签页。
+3. 点击 **「读取歌单 URL」**。扩展读取这个标签页的会话，Host 分页读取当前账号的全部自建、收藏歌单。预览显示账号、每张歌单的名称、曲目数和公开 URL；曲目数缺失时明确显示“未知”，没有公开 URL 的歌单显示其真实 ID，不拼造链接。歌单较多时点击「加载更多」，展示全部页后才能确认。
+4. 核对列表后，点击 **「确认下载以上歌单」**。扩展重新读取当前标签页会话，Host 核对仍为预览时的账号，才把这份已确认的歌单集合加入队列，并逐张读取歌曲、开始下载。
+5. 歌曲保存为 MP3，按账号和歌单建目录。空歌单保留目录；同一首歌出现在多张歌单时，优先为已下载文件建立硬链接，不能建立时复制，避免重复下载并保留各歌单归属。
+
+**读取预览只读取歌单目录，不解析歌曲、不下载媒体、不加入队列。** 预览有效期为 15 分钟；在同一标签页、同一来源下关闭并重新打开弹窗可以恢复预览。切换标签页、修改来源、取消预览或重连 Host 后需要重新读取。接口确认没有歌单时显示空列表，不创建下载任务。具体的公开歌单、`mixsong` 单曲和带 hash 的歌曲 URL 保留原来的直接加入队列流程。
+
+### 已显示昵称却无法读取会话
+
+1.4.1 优先在当前酷狗主站标签页中调用官网已有的 `getBaseInfo(1014, callback)`；函数不可用或未给出完整字段时读取该页面实际可见的 `KuGoo`、`kg_mid`、`kg_dfid` Cookie。仍无法取得完整会话时，再使用 Cookie API，限定当前标签页所属的 Cookie store、页面 URL，并在浏览器提供分区 API 时读取该标签页的对应分区。这个流程使用 Chromium API，不依赖浏览器名称为 Chrome。
+
+这次增加了 **`scripting` 权限**，用于读取当前酷狗主站顶层页面的必要会话字段。升级后须在 `chrome://extensions` 或 `brave://extensions` 重新加载扩展，确认允许扩展访问酷狗主站，再重新打开弹窗。扩展不会加载远程脚本，也不扫描 `localStorage` / `sessionStorage`。官网现有脚本仍使用 `KuGoo`；“网页显示昵称、扩展没有读到会话”不足以确定是 Cookie 分区、浏览器设置或登录接口变更导致。
+
+无法读取时，错误提示区分“页面和 Cookie API 均未成功”与“已读取但会话字段不完整”，并仅显示页面读取是否成功、用户 ID / 令牌字段是否存在、Cookie API 是否成功，不显示字段值。若网页已显示昵称，可先刷新该页后重新读取，并核对扩展的站点访问权限；不再仅凭 Cookie API 缺少一个名称就提示未登录。
+
+```text
+Downloads/YT-Autodownload/audio/kugou/
+  用户 <用户ID>/
+    <歌单标题> [<歌单ID>]/
+      001 - <歌曲标题> [<歌曲hash>].mp3
+```
+
+个人歌单读取不依赖酷狗网页是否显示入口；接口拒绝登录、会话过期或返回不完整分页时会明确失败，不能将失败当作“账号没有歌单”。
+
+个人歌单任务绑定酷狗用户 ID，并保存用户已经确认的歌单计划（名称、ID、曲目数、已有公开 URL），供重试使用。Cookie/token 只在浏览器与 Host 之间传递并驻留内存，不进入预览界面、日志、队列状态文件或队列广播；公开酷狗来源和媒体下载请求不使用这份登录凭据。Host 退出或重启后，未完成的个人歌单任务会提示重新取得会话并重试；重试继续处理原先确认的歌单集合，若账号已切换则拒绝继续。要处理另一个账号或更新后的歌单集合，请重新读取 URL 并确认。
+
+从 **1.4.0** 升级时，历史个人歌单任务没有“已确认的歌单计划”，不能直接重试开始下载。请在当前账号的主站标签页重新读取歌单 URL，核对后确认。
+
+某首歌或某张歌单失败时，会继续处理其余可读取内容，并将整个任务标记为失败，保留已成功文件供重试复用。个人歌单目录可完整读取，也不代表每首歌都能取得完整媒体：当前媒体路径仍使用公开播放地址接口，登录、会员、版权或地区限制导致的无直链、试听片段仍会报错。
+
+**验证边界：**已核对官网的登录信息读取、H5 请求签名脚本和 Chromium 的页面注入 / Cookie API 约定；相关个人歌单端点在匿名请求下返回 HTTP 200 与 `status: 0 / error_code: 20010`。这证明端点有响应，不能证明有效登录态一定能读取全部歌单。本次没有真实账号在 Chrome 或 Brave 下的端到端实测；会话读取、预览确认、分页、账号隔离、重试与下载行为使用离线回归验证。协议来源和验证范围见 [多平台验证记录](docs/platform-support.md)。
+
 ## v0.2.0：bilibili 与酷狗音乐（Host / 扩展 1.3.0）
 
 | 平台 | 支持的来源 | 下载后端 | 输出 |
@@ -15,7 +54,7 @@
 1. Chrome 打开目标页面，点击扩展的「读取当前页」，或直接粘贴 URL。
 2. bilibili 选择 MP4 或 MP3；酷狗自动选择 MP3。
 3. 点击「加入下载队列」。集合按一个来源任务排队，界面显示当前条目和进度。
-4. 默认匿名请求。bilibili 的资源需要登录时，勾选「使用 bilibili 登录 Cookie」；YouTube 和 bilibili 的 Cookie 独立保存，重试也按原任务的平台重新获取。酷狗不读取、不传递浏览器 Cookie。
+4. 默认匿名请求。bilibili 的资源需要登录时，勾选「使用 bilibili 登录 Cookie」；YouTube 和 bilibili 的 Cookie 独立保存，重试也按原任务的平台重新获取。酷狗公开歌单和单曲不读取、不传递浏览器 Cookie；开发版个人歌单入口的登录流程见上文。
 
 支持的典型地址（花括号内容替换为实际 ID）：
 
@@ -48,7 +87,7 @@ Downloads/YT-Autodownload/
 
 YouTube 保留原目录和下载记录。bilibili 使用独立的 yt-dlp archive；酷狗在 `audio/kugou/archive-audio.json` 中记录歌曲 hash 与完成文件位置，只有下载、长度校验、MP3 转换全部成功才归档。已归档的文件被删除后允许重新下载。酷狗取消时会停止 HTTP 读取或其 FFmpeg 转码；yt-dlp 的视频合并 / 转码阶段仍可能需要等待当前后处理结束才响应取消。
 
-**Windows 发行版：v0.2.0；Native Host / Chrome 扩展：1.3.0。** [下载 Windows 安装包](https://github.com/wongyiuming/yt_autodownload_powerbycodex/releases/download/v0.2.0/yt_autodownload_windows.zip)，或查看 [Release 与 SHA256 校验文件](https://github.com/wongyiuming/yt_autodownload_powerbycodex/releases/tag/v0.2.0)。安装包已包含 Host EXE、FFmpeg 和 Node.js，无需另装 Python。解压后运行 `Install-Windows.bat`，再按下方步骤加载或重新加载 `%LOCALAPPDATA%\YTAutodownload\extension` 中的扩展，使新增站点权限生效。
+**已发行 Windows 包：v0.2.0；包内 Native Host / Chrome 扩展：1.3.0，不含个人歌单功能。** [下载 v0.2.0 Windows 安装包](https://github.com/wongyiuming/yt_autodownload_powerbycodex/releases/download/v0.2.0/yt_autodownload_windows.zip)，或查看 [Release 与 SHA256 校验文件](https://github.com/wongyiuming/yt_autodownload_powerbycodex/releases/tag/v0.2.0)。安装包已包含 Host EXE、FFmpeg 和 Node.js，无需另装 Python。解压后运行 `Install-Windows.bat`，再按下方步骤加载或重新加载 `%LOCALAPPDATA%\YTAutodownload\extension` 中的扩展，使新增站点权限生效。
 
 实际集合解析、下载样本与验证边界见 [多平台验证记录](docs/platform-support.md)。
 
@@ -78,14 +117,14 @@ $manifest = Get-Content "$env:LOCALAPPDATA\YTAutodownload\com.wongyiuming.yt_aut
 ## 已实现
 
 - 自动读取当前 Chrome 标签页 URL。
-- 自动识别 YouTube 视频、播放列表、公开频道，以及 bilibili 视频 / 收藏夹 / 合集、酷狗歌曲 / 歌单。
+- 自动识别 YouTube 视频、播放列表、公开频道，以及 bilibili 视频 / 收藏夹 / 合集、酷狗歌曲 / 公开歌单；1.4.1 开发版支持酷狗主站的个人歌单 URL 预览与确认下载。
 - 如果当前 `watch` URL 带 `list=`，按**整个播放列表**处理。
 - 下载前选择：**视频 MP4** 或 **仅音频 MP3**。
 - 串行下载队列；当前任务运行时仍可继续追加视频、列表或频道。
-- 队列状态持久化；Native host 重连后恢复未完成任务。
+- 队列状态持久化；普通任务在 Native Host 重启后恢复，个人歌单任务需要重新取得当前账号会话后重试。
 - 显示当前条目、进度、速度和 ETA。
 - 支持取消任务、清理完成项、打开下载目录。
-- 仅在勾选登录模式时，从当前 Chrome 资料读取对应的 YouTube / bilibili cookies 并交给本机 host；酷狗无需此步骤。
+- YouTube / bilibili 在勾选登录模式时读取对应 Chrome Cookie；酷狗个人歌单入口自动读取当前酷狗账号会话，公开歌单和单曲保持匿名。
 - `download_archive` 去重，同一视频不会因为多个来源被反复下载。
 - GitHub Actions 自动生成 Windows 发行包并可发布到 Release。
 
@@ -188,7 +227,7 @@ UI 全部在 Chrome；下载、合并和文件整理由本机组件完成。
 4. Chrome 打开 `chrome://extensions`。
 5. 开启右上角 **开发者模式**。
 6. 第一次安装：点击 **加载已解压的扩展程序**，选择安装后的 `%LOCALAPPDATA%\YTAutodownload\extension` 目录，可将此路径粘贴到文件夹选择器地址栏。
-7. 升级时：在扩展卡片点击重新加载；如果仍使用旧 ZIP 的解压目录，请改为上面的固定目录。打开扩展，点击「重新连接 Host」，确认扩展和已连接 Host 都显示 **1.3.0**。
+7. 升级时：在扩展卡片点击重新加载；如果仍使用旧 ZIP 的解压目录，请改为上面的固定目录。打开扩展，点击「重新连接 Host」，确认扩展和 Host 版本一致：v0.2.0 已发行包为 **1.3.0**，包含个人歌单预览改动的开发版为 **1.4.1**。此开发版新增 `scripting` 权限，须重新加载扩展使权限生效；Brave 可在 `brave://extensions` 执行相同步骤。
 
 扩展 ID 固定为：
 
@@ -220,7 +259,7 @@ Install-Windows.bat
 - 同时只执行 1 个来源任务，避免多个大频道同时抓取导致资源和风控压力叠加。
 - 播放列表、频道、收藏夹、合集、歌单在 UI 中表现为一个来源任务，内部由相应平台后端逐条处理。
 - 关闭 popup 不会停止当前任务。
-- Chrome/native host 重启后，之前处于 `downloading` 的任务恢复为 `queued`。
+- Chrome/native host 重启后，普通来源先前处于 `downloading` 的任务恢复为 `queued`；个人歌单任务的会话不持久化，恢复后提示重新登录并重试。
 - `download_archive` 会跳过已经成功完成的视频。
 
 ## 依赖和打包
@@ -236,7 +275,7 @@ Windows Action 会把 Native host 用 PyInstaller **冻结/打包**成单文件 
 
 ## 诊断
 
-此源码版本的 Native Host 是 1.3.0。运行以下命令无需打开 Chrome、无需 Cookie、不会下载媒体：
+此开发源码版本的 Native Host 是 1.4.1，已发行 v0.2.0 包仍为 1.3.0。运行以下命令无需打开浏览器、无需 Cookie、不会下载媒体；`--probe-url` 只用于公开来源，个人歌单需从当前已登录的酷狗主站标签页打开扩展，先读取 URL 再确认下载：
 
 ```powershell
  $manifest = Get-Content "$env:LOCALAPPDATA\YTAutodownload\com.wongyiuming.yt_autodownload.json" -Raw | ConvertFrom-Json
@@ -250,7 +289,7 @@ Windows Action 会把 Native host 用 PyInstaller **冻结/打包**成单文件 
 
 输出包括 `host_version`、`yt_dlp_version`、`httpx_version`、`ejs_available`、`ejs_version`、`node_version` 和 `node_compatible`。集合探测还输出 `platform`、`backend`、`item_count`。安装包构建时会验证 EJS 已冻结打包、Node.js 版本满足至少 v22 的要求。
 
-默认公开下载不附加 Cookie。只有在用户明确勾选登录模式时才携带对应站点的 Cookie；如果遇到 YouTube 的 `The page needs to be reloaded`，程序会针对这一错误自动尝试匿名访问；登录专属资源仍需要有效的浏览器 Cookie。未勾选或没有获取到对应站点 Cookie 的任务不会使用旧缓存。稳定重现的 reload 将在匿名重试失败后再尝试一次备用网页客户端，不会反复执行相同请求。重试任务时扩展也会重新获取对应站点的 Chrome Cookie。每次启动会在 `host.log` 中写入 `HOST_START` 和依赖版本，方便区分旧进程与新版本。
+默认公开下载不附加 Cookie。YouTube / bilibili 只在用户勾选登录模式时携带对应站点的 Cookie；酷狗个人歌单任务自动使用当前账号会话。若 YouTube 返回 `The page needs to be reloaded`，程序会针对这一错误自动尝试匿名访问；登录专属资源仍需要有效的浏览器 Cookie。未勾选或没有获取到对应站点 Cookie 的 YouTube / bilibili 任务不会使用旧缓存。稳定重现的 reload 将在匿名重试失败后再尝试一次备用网页客户端，不会反复执行相同请求。重试任务时扩展重新获取对应站点的 Chrome Cookie；酷狗还会核对是否为原任务绑定的账号。每次启动会在 `host.log` 中写入 `HOST_START` 和依赖版本，方便区分旧进程与新版本。
 
 
 ```text

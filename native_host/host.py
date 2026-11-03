@@ -13,6 +13,8 @@ from album_support import install_album_support
 from archive_location import install_archive_location
 from channel_enhancements import install_channel_enhancements
 from host_legacy import CancelledError, HostLogger, NativeWriter, QueueManager, read_message
+from kugou_library import session_from_cookies
+from kugou_preview import KugouPreviewStore
 from runtime_enhancements import install_runtime_enhancements, install_version_info
 from youtube_runtime import runtime_diagnostics
 
@@ -23,6 +25,28 @@ install_album_support(QueueManager, CancelledError)
 # Preserve v0.1.2 archive migration semantics for existing installations.
 install_archive_location(QueueManager)
 install_version_info(QueueManager)
+
+
+def handle_kugou_preview(action: str, message: dict, manager, previews: KugouPreviewStore) -> dict:
+    """Read-only preview RPCs, with a separate one-time confirmation step."""
+    if action == "kugou_preview_start":
+        session = session_from_cookies(message.get("cookies") or [])
+        return {"preview": previews.start(session)}
+    if action == "kugou_preview_get":
+        return {"preview": previews.get(message.get("preview_id"),
+                                        message.get("offset", 0), message.get("limit", 50))}
+    if action == "kugou_preview_cancel":
+        return {"preview": previews.cancel(message.get("preview_id"))}
+    if action == "kugou_preview_confirm":
+        # Refresh the session at confirmation and bind it to the same account.
+        # consume is atomic: repeating a click cannot create a second task.
+        cookies = message.get("cookies") or []
+        session = session_from_cookies(cookies)
+        plan = previews.consume(message.get("preview_id"), session.user_id)
+        task = manager.enqueue("https://www.kugou.com/", "audio", "酷狗个人歌单（已确认）",
+                               cookies, True, kugou_playlists=plan)
+        return {"queue": manager.snapshot(), "task_id": task.id}
+    raise ValueError("未知歌单预览操作")
 
 
 def main() -> int:
@@ -74,6 +98,14 @@ def main() -> int:
     )
     writer = NativeWriter()
     manager = QueueManager(writer)
+    previews = KugouPreviewStore()
+    try:
+        return serve_messages(writer, manager, previews)
+    finally:
+        previews.close()
+
+
+def serve_messages(writer, manager, previews: KugouPreviewStore) -> int:
     writer.send({"event": "hello", "host": manager.host_info(), "queue": manager.snapshot()})
     while True:
         try:
@@ -86,6 +118,9 @@ def main() -> int:
                 response = {"ok": True, "reply_to": request_id}
                 if action in {"hello", "list"}:
                     response.update({"host": manager.host_info(), "queue": manager.snapshot()})
+                elif action in {"kugou_preview_start", "kugou_preview_get",
+                                "kugou_preview_cancel", "kugou_preview_confirm"}:
+                    response.update(handle_kugou_preview(action, message, manager, previews))
                 elif action == "enqueue":
                     manager.enqueue(
                         message.get("url", ""),

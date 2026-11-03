@@ -3,6 +3,11 @@ $Installer = Join-Path (Get-Location).Path "native_host\install_windows.ps1"
 $ManifestPath = Join-Path $env:LOCALAPPDATA "YTAutodownload\com.wongyiuming.yt_autodownload.json"
 $StableExt = Join-Path $env:LOCALAPPDATA "YTAutodownload\extension\manifest.json"
 $RegPath = "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.wongyiuming.yt_autodownload"
+# Expected version must come from the checked-out source, not the installed
+# output being tested, and must not become stale on the next version bump.
+$SourceManifest = Join-Path (Split-Path -Parent $PSScriptRoot) "extension\manifest.json"
+$ExpectedVersion = (Get-Content $SourceManifest -Raw -Encoding UTF8 | ConvertFrom-Json).version
+if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) { throw "Source extension version is missing." }
 
 & $Installer -NoLaunch
 $Registration = (Get-Item $RegPath).GetValue("")
@@ -13,7 +18,7 @@ if (-not $Manifest.path.Contains("\versions\")) {
 }
 if (-not (Test-Path $Manifest.path)) { throw "Registered host executable is missing." }
 $Health = (& $Manifest.path --diagnostics | ConvertFrom-Json)
-if ($Health.host_version -ne "1.3.0") { throw "Installed host version mismatched." }
+if ($Health.host_version -ne $ExpectedVersion) { throw "Installed host version mismatched: expected $ExpectedVersion." }
 $Extension = Get-Content $StableExt -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($Extension.version -ne $Health.host_version) { throw "Installed extension mismatch." }
 
