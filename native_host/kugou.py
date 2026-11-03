@@ -182,11 +182,12 @@ class KugouClient:
             host = parsed.hostname.lower()
             if metadata and not (host == "kugou.com" or host.endswith(".kugou.com")):
                 raise KugouError("酷狗元数据请求被重定向到非酷狗站点")
-            request = self.client.build_request("GET", url, params=params,
-                                                headers={**_BROWSER_HEADERS, **(headers or {})})
-            request.headers.pop("cookie", None)
+            # Never inherit a client's cookies, authorization or query defaults.
+            # Account playback uses a separate, fixed-endpoint request path.
+            request = httpx.Request("GET", url, params=params,
+                                    headers={**_BROWSER_HEADERS, **(headers or {})})
             try:
-                response = self.client.send(request, stream=stream, follow_redirects=False)
+                response = self.client.send(request, auth=None, stream=stream, follow_redirects=False)
             except httpx.HTTPError as exc:
                 raise KugouError(f"酷狗 HTTP 连接失败（{host}）：{type(exc).__name__}") from exc
             if response.is_redirect:

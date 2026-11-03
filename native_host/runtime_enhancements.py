@@ -41,6 +41,19 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
                     self._kugou_sessions = {}
                 self._kugou_sessions[task.id] = session
                 task.use_cookies = True
+            elif platform == "kugou" and source.kind == "song":
+                enabled = task.use_cookies if use_cookies is None else bool(use_cookies)
+                if enabled:
+                    session = session_from_cookies(cookies or [])
+                    if task.kugou_user_id and session.user_id != task.kugou_user_id:
+                        raise KugouAuthError("当前酷狗账号与原单曲任务不同；请切回原账号重试，或重新添加任务")
+                    if not hasattr(self, "_kugou_sessions"):
+                        self._kugou_sessions = {}
+                    self._kugou_sessions[task.id] = session
+                    task.kugou_user_id = session.user_id
+                else:
+                    getattr(self, "_kugou_sessions", {}).pop(task.id, None)
+                task.use_cookies = enabled
             elif use_cookies is not None:
                 cookies = host_legacy.cookies_for_platform(cookies or [], platform)
                 task.use_cookies = bool(use_cookies and cookies)
@@ -49,7 +62,7 @@ def install_runtime_enhancements(queue_manager_cls, cancelled_error_cls) -> None
                         self._write_cookies(cookies)
                     else:
                         self._write_cookies(cookies, platform)
-            if platform == "kugou" and source.kind != "library":
+            if platform == "kugou" and source.kind not in {"library", "song"}:
                 task.use_cookies = False
             task.platform = platform
             self.cancelled.discard(task_id)
@@ -242,7 +255,7 @@ def install_version_info(queue_manager_cls) -> None:
     def host_info(self):
         info = original(self)
         info.update({
-            "version": "1.4.4",
+            "version": "1.4.5",
             **runtime_diagnostics(self.node_path),
             "album_organization": True,
             "auto_retry_count": AUTO_RETRY_COUNT,
@@ -250,6 +263,7 @@ def install_version_info(queue_manager_cls) -> None:
             "supported_platforms": ["youtube", "bilibili", "kugou"],
             "kugou_personal_library": True,
             "kugou_playlist_preview": True,
+            "kugou_single_session": True,
             "download_backends": {"youtube": "yt-dlp", "bilibili": "yt-dlp", "kugou": "httpx"},
         })
         return info

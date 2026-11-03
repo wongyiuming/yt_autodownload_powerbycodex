@@ -236,6 +236,11 @@ class QueueManager:
                         if task.kugou_confirmed and task.status in {"queued", "downloading"}:
                             task.status = "error"
                             task.error = "酷狗个人歌单登录会话未保存；请在原账号登录后点击重试"
+                    elif source.platform == "kugou" and source.kind == "song" and task.use_cookies:
+                        task.kind = source.kind
+                        if task.status in {"queued", "downloading"}:
+                            task.status = "error"
+                            task.error = "酷狗单曲登录会话未保存；请打开原歌曲页面，以原账号重新读取登录态后重试"
                 except (ValueError, TypeError, AttributeError):
                     # New validation must not erase unrelated queued tasks when
                     # an old state file contains an obsolete or invalid URL.
@@ -283,6 +288,7 @@ class QueueManager:
         if source.platform == "kugou" and mode != "audio":
             raise ValueError("酷狗音乐仅支持音频下载，请选择 MP3")
         personal_library = source.platform == "kugou" and source.kind == "library"
+        authenticated_song = source.platform == "kugou" and source.kind == "song" and use_cookies
         session = None
         plan = ()
         if personal_library:
@@ -293,9 +299,12 @@ class QueueManager:
             if not use_cookies:
                 raise KugouAuthError("请从当前酷狗标签页读取会话后确认下载")
             session = session_from_cookies(cookies)
+        elif authenticated_song:
+            from kugou_library import session_from_cookies
+            session = session_from_cookies(cookies)
         cookies = cookies_for_platform(cookies, source.platform)
-        enabled = personal_library or bool(use_cookies and cookies)
-        if enabled and not personal_library:
+        enabled = bool(personal_library or authenticated_song or (use_cookies and cookies))
+        if enabled and not (personal_library or authenticated_song):
             if source.platform == "youtube":
                 self._write_cookies(cookies)
             else:
@@ -322,9 +331,10 @@ class QueueManager:
                 if not hasattr(self, "_kugou_sessions"):
                     self._kugou_sessions = {}
                 self._kugou_sessions[task.id] = session
-                if not hasattr(self, "_kugou_plans"):
-                    self._kugou_plans = {}
-                self._kugou_plans[task.id] = plan
+                if personal_library:
+                    if not hasattr(self, "_kugou_plans"):
+                        self._kugou_plans = {}
+                    self._kugou_plans[task.id] = plan
             self.tasks.append(task)
         self.emit(force=True)
         self.wake.set()

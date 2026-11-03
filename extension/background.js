@@ -279,9 +279,28 @@ async function confirmKugouPreview(message) {
   }
 }
 
+async function singleSongCookies(source, tabId) {
+  // A pasted URL must not accidentally borrow another tab/account's session.
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const current = classifySourceUrl(tab?.url || "");
+  if (!Number.isInteger(tab?.id) || (tabId != null && tab.id !== tabId)
+      || current.platform !== "kugou" || current.kind !== "song"
+      || current.normalizedUrl !== source.normalizedUrl) {
+    throw new Error("请打开这首歌的酷狗网页并读取当前页，再使用登录态下载；公开下载可取消勾选登录状态。");
+  }
+  const cookies = await getKugouSessionCookies(tab.id);
+  const [after] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const still = await chrome.tabs.get(tab.id);
+  if (after?.id !== tab.id || still?.url !== tab.url) {
+    throw new Error("读取登录态期间歌曲标签页发生切换或跳转，请重新读取当前页。");
+  }
+  return cookies;
+}
+
 async function platformCookies(platform, enabled) {
   const domain = { youtube: "youtube.com", bilibili: "bilibili.com" }[platform];
-  // Only the personal library needs Kugou account metadata. Public sources stay anonymous.
+  // Personal-library retries use the active main-site session. Singles bind
+  // their own exact source tab via singleSongCookies, never a different tab.
   if (platform === "kugou" && enabled) return getKugouSessionCookies();
   if (!enabled || !domain) return [];
   try {
@@ -339,8 +358,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (source.platform === "kugou" && source.kind === "library") {
         throw new Error("请先读取歌单 URL，再点击确认下载。");
       }
-      const useCookies = source.platform !== "kugou" && Boolean(message.useCookies);
-      const cookies = await platformCookies(source.platform, useCookies);
+      const singleSong = source.platform === "kugou" && source.kind === "song";
+      const useCookies = (source.platform !== "kugou" || singleSong) && Boolean(message.useCookies);
+      const cookies = singleSong && useCookies
+        ? await singleSongCookies(source, message.tabId)
+        : await platformCookies(source.platform, useCookies);
       const result = await rpc("enqueue", {
         url: source.normalizedUrl,
         mode: source.platform === "kugou" ? "audio" : message.mode,
@@ -371,8 +393,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (source.platform === "kugou" && source.kind === "library" && task.kugou_confirmed !== true) {
         throw new Error("此个人歌单任务尚未确认，请重新读取歌单 URL 并确认下载。");
       }
-      const useCookies = source.platform === "kugou" ? source.kind === "library" : Boolean(message.useCookies ?? task.use_cookies);
-      const cookies = await platformCookies(source.platform, useCookies);
+      const singleSong = source.platform === "kugou" && source.kind === "song";
+      const useCookies = source.platform === "kugou" && !singleSong
+        ? source.kind === "library" : Boolean(message.useCookies ?? task.use_cookies);
+      const cookies = singleSong && useCookies
+        ? await singleSongCookies(source, message.tabId)
+        : await platformCookies(source.platform, useCookies);
       const result = await rpc("retry", { task_id: message.taskId, cookies, use_cookies: useCookies });
       queue = result.queue || queue;
       sendResponse(result);

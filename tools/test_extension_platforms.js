@@ -107,7 +107,7 @@ async function testBackgroundRouting() {
   assert.equal(h.requests.at(-1).use_cookies, false);
   assert.equal(h.requests.at(-1).cookies.length, 0);
 
-  result = await h.send({ type: "enqueue", url: "https://www.kugou.com/song/#hash=0123456789ABCDEF0123456789ABCDEF", mode: "audio", useCookies: true });
+  result = await h.send({ type: "enqueue", url: "https://www.kugou.com/song/#hash=0123456789ABCDEF0123456789ABCDEF", mode: "audio", useCookies: false });
   assert.equal(result.ok, true);
   assert.equal(h.requests.at(-1).kind, "song");
   assert.equal(h.requests.at(-1).cookies.length, 0);

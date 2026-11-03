@@ -184,6 +184,12 @@ def download_kugou(manager, task, cancelled_error_cls, *, client=None) -> None:
         if not session or session.user_id != task.kugou_user_id:
             raise KugouAuthError("酷狗个人歌单登录会话已失效；请在原账号登录后从扩展点击重试")
         active_client = client or KugouLibraryClient(session)
+    elif source.kind == "song" and task.use_cookies:
+        from kugou_playback import KugouSongClient
+        session = getattr(manager, "_kugou_sessions", {}).get(task.id)
+        if not session or session.user_id != task.kugou_user_id:
+            raise KugouAuthError("酷狗单曲登录会话已结束；请在原歌曲页面以原账号重试")
+        active_client = client or KugouSongClient(session)
     else:
         active_client = client or KugouClient()
     try:
@@ -275,7 +281,7 @@ def download_kugou(manager, task, cancelled_error_cls, *, client=None) -> None:
                         temporary_archive.write_text(json.dumps(archive, ensure_ascii=False, indent=2), encoding="utf-8")
                         temporary_archive.replace(archive_path)
                     update(progress=index / item_count * 100)
-                except cancelled_error_cls:
+                except (cancelled_error_cls, KugouAuthError):
                     raise
                 except Exception as exc:
                     from host_legacy import HostLogger

@@ -33,7 +33,7 @@ let previewConfirmPending = false;
 let previewSourceValue = "";
 let previewTabId = null;
 let previewRequestKey = "";
-const cookiePreferences = { youtube: false, bilibili: false };
+const cookiePreferences = { youtube: false, bilibili: false, kugou: true };
 const expectedHostVersion = chrome.runtime.getManifest().version;
 
 function hostReady() {
@@ -54,8 +54,9 @@ function setMode(mode) {
 
 function updateDetected() {
   const previousPlatform = detected.platform;
+  const previousKind = detected.kind;
   detected = classifySourceUrl(sourceUrl.value);
-  if (detected.platform !== previousPlatform) {
+  if (detected.platform !== previousPlatform || (detected.platform === "kugou" && detected.kind !== previousKind)) {
     useCookies.checked = Boolean(cookiePreferences[detected.platform]);
   }
   const kugou = detected.platform === "kugou";
@@ -70,11 +71,13 @@ function updateDetected() {
     label.setAttribute("aria-disabled", String(input.disabled));
   });
   if (kugou) setMode("audio");
-  useCookies.disabled = !["youtube", "bilibili"].includes(detected.platform);
+  const kugouSong = kugou && detected.kind === "song";
+  useCookies.disabled = !["youtube", "bilibili"].includes(detected.platform) && !kugouSong;
   if (useCookies.disabled) useCookies.checked = kugouLibrary;
   cookieLabel.textContent = kugouLibrary
     ? "自动使用当前浏览器标签页的酷狗登录状态（个人歌单必需）"
-    : kugou ? "酷狗公开歌曲和歌单使用 HTTP 直连，无需读取浏览器 Cookie"
+    : kugouSong ? "使用当前歌曲页面的酷狗登录状态（仅发往官方播放接口）"
+    : kugou ? "酷狗公开歌单使用 HTTP 直连，不读取浏览器 Cookie"
       : `使用${platformText(detected.platform) || "当前平台"}登录 Cookie（仅需登录时勾选）`;
   kindBadge.className = `badge ${detected.kind}`;
   kindBadge.textContent = [platformText(detected.platform), detected.label].filter(Boolean).join(" · ");
@@ -186,7 +189,7 @@ function renderQueue(items) {
     const taskSource = classifySourceUrl(task.url);
     const taskPlatform = taskSource.platform;
     const personalLibrary = taskPlatform === "kugou" && taskSource.kind === "library";
-    const account = personalLibrary && task.kugou_user_id ? ` · 账号 ${escapeHtml(task.kugou_user_id)}` : "";
+    const account = (personalLibrary || (taskPlatform === "kugou" && task.use_cookies)) && task.kugou_user_id ? ` · 账号 ${escapeHtml(task.kugou_user_id)}` : "";
     const playlistCount = personalLibrary ? taskCountText(task.playlist_index, task.playlist_count, "歌单 ") : "";
     const currentCount = taskCountText(task.item_index, task.item_count, personalLibrary ? "曲目 " : "");
     const speed = task.speed || "";
@@ -225,8 +228,10 @@ function renderQueue(items) {
             setMessage("此任务尚未确认，请在已登录的酷狗主站重新读取歌单 URL，再确认下载。", "error");
             return;
           }
-          const payload = { type: "retry", taskId: task.id };
-          if (taskPlatform === detected.platform) payload.useCookies = useCookies.checked;
+          const payload = { type: "retry", taskId: task.id, tabId: currentTabId };
+          // Do not let a library page's mandatory checkbox change a single task.
+          if (taskPlatform === detected.platform && (taskPlatform !== "kugou"
+              || taskSource.kind === detected.kind)) payload.useCookies = useCookies.checked;
           send(payload).catch(e => setMessage(e.message, "error"));
         });
         actions.appendChild(retry);
@@ -510,14 +515,15 @@ async function send(payload) {
   return response;
 }
 
-document.getElementById("readTab").addEventListener("click", () => readCurrentTab().catch((e) => setMessage(e.message, "error")));
+ document.getElementById("readTab").addEventListener("click", () => readCurrentTab().catch((e) => setMessage(e.message, "error")));
 sourceUrl.addEventListener("input", () => {
   invalidateLibraryPreview();
   currentTitle = "";
   updateDetected();
 });
 useCookies.addEventListener("change", () => {
-  if (["youtube", "bilibili"].includes(detected.platform)) {
+  if (["youtube", "bilibili"].includes(detected.platform)
+      || (detected.platform === "kugou" && detected.kind === "song")) {
     cookiePreferences[detected.platform] = useCookies.checked;
   }
 });
@@ -549,6 +555,7 @@ enqueueButton.addEventListener("click", async () => {
       kind: detected.kind,
       mode: selectedMode(),
       title: currentTitle,
+      tabId: currentTabId,
       useCookies: useCookies.checked,
     });
     const suffix = detected.platform === "youtube" && detected.kind === "channel" ? "；开始前会先整理已经下载的同频道文件。" : "。";
