@@ -199,9 +199,9 @@ class SingleQueueTests(unittest.TestCase):
         self.assertNotIn(task.id, manager._kugou_plans)
         self.assertEqual(manager._kugou_sessions[task.id].token, TOKEN)
         manager._save()
-        self.assertNotIn(TOKEN, legacy.STATE_PATH.read_text())
+        self.assertNotIn(TOKEN, legacy.STATE_PATH.read_text(encoding="utf-8"))
         self.assertNotIn(TOKEN, json.dumps(manager.snapshot()))
-        self.assertNotIn("token", legacy.STATE_PATH.read_text())
+        self.assertNotIn("token", legacy.STATE_PATH.read_text(encoding="utf-8"))
         manager._write_cookies.assert_not_called()
 
     def test_missing_session_fails_before_enqueue_and_opt_out_stays_anonymous(self):
@@ -234,7 +234,7 @@ class SingleQueueTests(unittest.TestCase):
         factory.assert_called_once_with(manager._kugou_sessions[task.id])
         self.assertEqual([r.url.host for r in calls],["wwwapi.kugou.com","fs.kugou.com"])
         self.assertEqual(len(list(manager.download_root.rglob("*.mp3"))),1)
-        archive=(manager.download_root/"audio/kugou/archive-audio.json").read_text()
+        archive=(manager.download_root/"audio/kugou/archive-audio.json").read_text(encoding="utf-8")
         self.assertIn(HASH,archive);self.assertNotIn(TOKEN,archive)
 
     def test_retry_refreshes_same_account_and_rejects_switch_without_mutation(self):
